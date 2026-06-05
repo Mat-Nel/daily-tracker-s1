@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tracker">
+<title>Daily Tracker</title>
+<style>
+  :root,[data-theme="dark"]{
+    --bg:#0f1115;--panel:#171a21;--panel2:#1e222b;--line:#2a2f3a;
+    --text:#e8eaf0;--muted:#9aa3b2;--accent:#7c6cf0;--good:#3bb38a;--warn:#e0a23b;
+    --chk:#3bb38a;--chk-empty:#2a2f3a;--banner:#1a2a1a;--banner-text:#7ecfa0;
+  }
+  [data-theme="light"]{
+    --bg:#f4f5f8;--panel:#fff;--panel2:#f0f2f6;--line:#dde1e8;
+    --text:#1b1e26;--muted:#5c6677;--accent:#6356d8;--good:#1f9b75;--warn:#c4842a;
+    --chk:#1f9b75;--chk-empty:#dde1e8;--banner:#e8f5ee;--banner-text:#1f7a58;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--text);line-height:1.5;
+    padding:14px max(16px,env(safe-area-inset-right)) 30px max(16px,env(safe-area-inset-left));
+    padding-top:max(14px,env(safe-area-inset-top));
+    max-width:760px;margin:0 auto;transition:background .2s,color .2s}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px}
+  h1{font-size:19px;font-weight:650}
+  .sub{color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  .iconbtn{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:9px;
+    padding:7px 11px;cursor:pointer;font-size:13px;font-weight:500;transition:.15s;min-height:36px}
+  .iconbtn:hover{border-color:var(--accent)}
+  .banner{background:var(--banner);border:1px solid var(--line);border-radius:11px;
+    padding:11px 13px;margin-bottom:13px;font-size:12.5px;color:var(--banner-text);
+    display:flex;gap:10px;align-items:flex-start}
+  .banner b{display:block;margin-bottom:3px;font-size:13px}
+  .banner-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;
+    flex-shrink:0;padding:0 2px;line-height:1}
+  .weeknav{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:9px 12px;margin-bottom:13px}
+  .weeknav .label{font-size:13.5px;font-weight:600;text-align:center}
+  .weeknav .label small{display:block;font-weight:400;color:var(--muted);font-size:11.5px}
+  .navb{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;
+    width:36px;height:36px;font-size:18px;cursor:pointer;flex-shrink:0}
+  .navb:disabled{opacity:.35;cursor:default}
+  .daypick{display:flex;gap:5px;margin-bottom:14px}
+  .dp{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:7px 2px;
+    text-align:center;cursor:pointer;transition:.12s;min-height:52px;display:flex;flex-direction:column;justify-content:center}
+  .dp .dn{font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase}
+  .dp .dd{font-size:14px;font-weight:600;margin-top:1px}
+  .dp.active{background:var(--accent);border-color:var(--accent)}
+  .dp.active .dn,.dp.active .dd{color:#fff}
+  .dp.today:not(.active){border-color:var(--accent)}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px;margin-bottom:13px}
+  .panel h2{font-size:14px;font-weight:650;margin-bottom:3px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px}
+  .rate{font-size:12px;color:var(--muted);font-weight:500}
+  .rate b{color:var(--good)}
+  .ph{font-size:11.5px;color:var(--muted);margin-bottom:11px}
+  .item{display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer;border-radius:8px;transition:.1s}
+  .item:active{background:var(--panel2)}
+  .box{width:26px;height:26px;border-radius:7px;border:2px solid var(--chk-empty);flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;transition:.12s;font-size:15px;color:#fff}
+  .item.done .box{background:var(--chk);border-color:var(--chk)}
+  .item .txt{font-size:14px;flex:1}
+  .item.done .txt{color:var(--muted);text-decoration:line-through}
+  .habit{display:flex;align-items:center;gap:12px;padding:10px 4px;border-radius:8px;cursor:pointer}
+  .habit:active{background:var(--panel2)}
+  .habit .hname{flex:1;font-size:14px;font-weight:500}
+  .habit .hname small{display:block;font-weight:400;color:var(--muted);font-size:11px;margin-top:1px}
+  .streak{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px;flex-shrink:0}
+  .streak b{color:var(--warn);font-size:15px}
+  .na{opacity:.4}
+  .miniwk{display:flex;gap:3px;margin-top:7px;margin-bottom:4px}
+  .mc{flex:1;height:6px;border-radius:3px;background:var(--chk-empty)}
+  .mc.on{background:var(--chk)}
+  .mc.na{background:transparent;border:1px dashed var(--line)}
+  .mc.future{background:var(--panel2)}
+  .trend{font-size:12.5px;color:var(--muted);line-height:1.8}
+  .trend b{color:var(--good)}
+  .future-msg{color:var(--muted);font-size:13.5px;padding:10px 4px}
+  dialog{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:14px;
+    padding:18px;max-width:440px;width:92%;max-height:90vh;overflow-y:auto}
+  dialog::backdrop{background:rgba(0,0,0,.65)}
+  dialog h3{font-size:16px;margin-bottom:8px}
+  dialog p{font-size:13px;color:var(--muted);margin-bottom:12px;line-height:1.6}
+  textarea{width:100%;height:110px;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:9px;font-family:monospace;font-size:11px;resize:vertical}
+  .drow{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:9px 15px;
+    font-size:13px;font-weight:600;cursor:pointer}
+  .btn.sec{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Daily Tracker</h1>
+    <div style="display:flex;gap:7px">
+      <button class="iconbtn" id="dataBtn" title="Back up / restore data">⇅</button>
+      <button class="iconbtn" id="themeBtn">🌙</button>
+    </div>
+  </div>
+  <div class="sub">Checklists keep you on routine · habits build streaks · all history saved locally.</div>
+
+  <div id="bannerWrap"></div>
+  <div id="app"></div>
+
+  <dialog id="dataDlg">
+    <h3>Back up or move your data</h3>
+    <p>Your data is saved in Safari on this device. To move it to a new device — copy this text, open the tracker in Safari on the new device, tap ⇅, paste, and import.</p>
+    <textarea id="dataBox" spellcheck="false" placeholder="Your data will appear here…"></textarea>
+    <div class="drow">
+      <button class="btn" id="copyBtn">Copy all</button>
+      <button class="btn sec" id="importBtn">Import pasted data</button>
+      <button class="btn sec" id="closeDlg">Close</button>
+    </div>
+  </dialog>
+
+<script>
+const LS_KEY = "dailytracker-v1";
+const LS_THEME = "dailytracker-theme";
+const LS_BANNER = "dailytracker-banner-dismissed";
+
+// ---------- data ----------
+const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const HABITS = [
+  {id:"gym",   name:"Gym",                    sub:"Push / Pull / Legs",        days:[1,3,5]},
+  {id:"tea",   name:"Tea + supplements",       sub:"Fish oil, creatine, vit D", days:null},
+  {id:"hair",  name:"Hair routine",            sub:"Wash + air dry",            days:[4,0]},
+  {id:"sleep", name:"Sleep 10:45 / wake 6:45", sub:"Consistent anchor",         days:null},
+];
+const MORNING = [
+  "Light on / curtains open",
+  "Feet on floor — no snooze",
+  "Supplements + water",
+  "Shower + dress",
+  "Grab-and-go breakfast",
+  "Tea kit in bag",
+  "Out the door on time",
+];
+const EVENING = [
+  "Dinner done by 7",
+  "Tomorrow's 3 key tasks written",
+  "Clothes laid out for morning",
+  "Screens down / wind-down",
+  "Lights out by 10:45",
+];
+
+// ---------- storage (localStorage) ----------
+let DATA = {days:{}};
+function loadData(){
+  try{const s=localStorage.getItem(LS_KEY);if(s)DATA=JSON.parse(s);}
+  catch(e){DATA={days:{}};}
+  if(!DATA.days)DATA.days={};
+}
+function saveData(){
+  try{localStorage.setItem(LS_KEY,JSON.stringify(DATA));}
+  catch(e){console.error("save failed",e);}
+}
+function rec(isoDate){
+  if(!DATA.days[isoDate])DATA.days[isoDate]={m:Array(MORNING.length).fill(false),e:Array(EVENING.length).fill(false),h:{}};
+  const d=DATA.days[isoDate];
+  if(!d.m||d.m.length!==MORNING.length)d.m=Array(MORNING.length).fill(false);
+  if(!d.e||d.e.length!==EVENING.length)d.e=Array(EVENING.length).fill(false);
+  if(!d.h)d.h={};
+  return d;
+}
+
+// ---------- date helpers ----------
+function iso(d){return d.toISOString().slice(0,10);}
+function startOfWeek(d){const x=new Date(d);x.setHours(0,0,0,0);x.setDate(x.getDate()-x.getDay());return x;}
+function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
+function fmtRange(s){
+  const e=addDays(s,6);const o={month:"short",day:"numeric"};
+  return s.toLocaleDateString(undefined,o)+" – "+e.toLocaleDateString(undefined,o)+", "+e.getFullYear();
+}
+
+const today=new Date();today.setHours(0,0,0,0);
+let weekStart=startOfWeek(today);
+let selDate=new Date(today);
+
+// ---------- streak + stats ----------
+function habitDue(h,date){return h.days===null||h.days.includes(date.getDay());}
+function streakFor(h){
+  let s=0;let d=new Date(today);
+  for(let i=0;i<400;i++){
+    if(habitDue(h,d)){
+      const r=DATA.days[iso(d)];
+      const done=r&&r.h&&r.h[h.id];
+      if(done){s++;}
+      else{if(iso(d)!==iso(today))break;}
+    }
+    d=addDays(d,-1);
+  }
+  return s;
+}
+function weekChecks(h,ws){
+  return [...Array(7)].map((_,i)=>{
+    const d=addDays(ws,i);
+    if(!habitDue(h,d))return"na";
+    if(d>today)return"future";
+    const r=DATA.days[iso(d)];
+    return(r&&r.h&&r.h[h.id])?"on":"off";
+  });
+}
+function checklistRate(field,ws){
+  let done=0,total=0;
+  for(let i=0;i<7;i++){
+    const d=addDays(ws,i);if(d>today)continue;
+    const r=DATA.days[iso(d)];
+    const arr=r&&r[field];
+    const len=field==="m"?MORNING.length:EVENING.length;
+    total+=len;if(arr)done+=arr.filter(Boolean).length;
+  }
+  return{done,total};
+}
+function allTimeRate(field){
+  let done=0,total=0;
+  const len=field==="m"?MORNING.length:EVENING.length;
+  Object.values(DATA.days).forEach(r=>{
+    const arr=r[field];if(arr){done+=arr.filter(Boolean).length;total+=len;}
+  });
+  return total?Math.round(100*done/total):null;
+}
+
+// ---------- banner ----------
+function renderBanner(){
+  const wrap=document.getElementById("bannerWrap");
+  // Show "Add to Home Screen" tip if not dismissed and not already in standalone mode
+  const standalone=window.navigator.standalone||window.matchMedia("(display-mode:standalone)").matches;
+  const dismissed=localStorage.getItem(LS_BANNER);
+  if(standalone||dismissed){wrap.innerHTML="";return;}
+  wrap.innerHTML=`<div class="banner">
+    <div style="flex:1"><b>📱 Add to your home screen</b>
+    Tap the Share button in Safari → "Add to Home Screen" → Add. Opens full-screen like an app, and your streaks save reliably in Safari.</div>
+    <button class="banner-close" id="dismissBanner" aria-label="Dismiss">×</button>
+  </div>`;
+  document.getElementById("dismissBanner").onclick=()=>{
+    localStorage.setItem(LS_BANNER,"1");wrap.innerHTML="";
+  };
+}
+
+// ---------- render ----------
+const appEl=document.getElementById("app");
+function render(){
+  const selIso=iso(selDate);
+  const r=rec(selIso);
+  const isFuture=selDate>today;
+  const mr=checklistRate("m",weekStart),er=checklistRate("e",weekStart);
+  const atCurrentWeek=iso(weekStart)===iso(startOfWeek(today));
+
+  let html="";
+
+  // week nav
+  html+=`<div class="weeknav">
+    <button class="navb" id="prevW">‹</button>
+    <div class="label">${fmtRange(weekStart)}<small>${atCurrentWeek?"This week":"Past week"}</small></div>
+    <button class="navb" id="nextW"${atCurrentWeek?" disabled":""}>›</button>
+  </div>`;
+
+  // day picker
+  html+=`<div class="daypick">`+[...Array(7)].map((_,i)=>{
+    const d=addDays(weekStart,i);const di=iso(d);
+    const cls=(di===selIso?"active ":"")+(di===iso(today)?"today":"");
+    return `<div class="dp ${cls}" data-i="${i}">
+      <div class="dn">${DAYS[d.getDay()]}</div>
+      <div class="dd">${d.getDate()}</div>
+    </div>`;
+  }).join("")+`</div>`;
+
+  if(isFuture){
+    html+=`<div class="panel"><div class="future-msg">That day hasn't arrived yet — pick today or a past day to check things off.</div></div>`;
+  } else {
+    // morning checklist
+    html+=`<div class="panel">
+      <h2>Morning launch <span class="rate">this week: <b>${mr.done}</b>/${mr.total} steps</span></h2>
+      <div class="ph">Tick as you go — gets you out the door without forgetting a step when you're groggy.</div>`;
+    MORNING.forEach((t,i)=>{
+      html+=`<div class="item${r.m[i]?" done":""}" data-k="m" data-i="${i}">
+        <div class="box">${r.m[i]?"✓":""}</div><div class="txt">${t}</div></div>`;
+    });
+    html+=`</div>`;
+
+    // habits
+    html+=`<div class="panel">
+      <h2>Habits <span class="rate">streaks below</span></h2>
+      <div class="ph">Tap to mark done. Dashed = not scheduled today, won't affect your streak.</div>`;
+    HABITS.forEach(h=>{
+      const due=habitDue(h,selDate);
+      const on=r.h&&r.h[h.id];
+      const s=streakFor(h);
+      const wk=weekChecks(h,weekStart);
+      html+=`<div class="habit${due?"":" na"}" data-hid="${h.id}"${due?"":" data-na='1'"}>
+        <div class="box">${on?"✓":""}</div>
+        <div class="hname">${h.name}<small>${due?h.sub:"not scheduled today"}</small></div>
+        <div class="streak"><b>${s}</b> 🔥</div>
+      </div>
+      <div class="miniwk">${wk.map(c=>`<div class="mc ${c}"></div>`).join("")}</div>`;
+    });
+    html+=`</div>`;
+
+    // evening checklist
+    html+=`<div class="panel">
+      <h2>Evening shutdown <span class="rate">this week: <b>${er.done}</b>/${er.total} steps</span></h2>
+      <div class="ph">Sets tomorrow up and protects sleep. The "3 tasks" step is your nightly to-do moment.</div>`;
+    EVENING.forEach((t,i)=>{
+      html+=`<div class="item${r.e[i]?" done":""}" data-k="e" data-i="${i}">
+        <div class="box">${r.e[i]?"✓":""}</div><div class="txt">${t}</div></div>`;
+    });
+    html+=`</div>`;
+
+    // all-time stats
+    const mr2=allTimeRate("m"),er2=allTimeRate("e"),days=Object.keys(DATA.days).length;
+    html+=`<div class="panel"><h2>All-time</h2>
+      <div class="trend">
+        Morning routine: <b>${mr2!==null?mr2+"%":"no data yet"}</b> of steps completed across all days.<br>
+        Evening routine: <b>${er2!==null?er2+"%":"no data yet"}</b> of steps completed across all days.<br>
+        Days recorded: <b>${days}</b>.
+      </div></div>`;
+  }
+
+  appEl.innerHTML=html;
+  bindEvents();
+}
+
+function bindEvents(){
+  // day picker
+  document.querySelectorAll(".dp").forEach(el=>el.onclick=()=>{
+    selDate=addDays(weekStart,+el.dataset.i);render();
+  });
+  // week nav
+  const p=document.getElementById("prevW"),n=document.getElementById("nextW");
+  if(p)p.onclick=()=>{weekStart=addDays(weekStart,-7);selDate=new Date(weekStart);render();};
+  if(n)n.onclick=()=>{
+    if(n.disabled)return;
+    weekStart=addDays(weekStart,7);
+    selDate=iso(weekStart)===iso(startOfWeek(today))?new Date(today):new Date(weekStart);
+    render();
+  };
+  // checklist items
+  document.querySelectorAll(".item").forEach(el=>el.onclick=()=>{
+    const r=rec(iso(selDate));r[el.dataset.k][+el.dataset.i]=!r[el.dataset.k][+el.dataset.i];
+    saveData();render();
+  });
+  // habits
+  document.querySelectorAll(".habit").forEach(el=>el.onclick=()=>{
+    if(el.dataset.na)return;
+    const r=rec(iso(selDate));r.h[el.dataset.hid]=!r.h[el.dataset.hid];
+    saveData();render();
+  });
+}
+
+// ---------- theme ----------
+const themeBtn=document.getElementById("themeBtn");
+let theme=localStorage.getItem(LS_THEME)||"dark";
+function applyTheme(){
+  document.documentElement.setAttribute("data-theme",theme);
+  themeBtn.textContent=theme==="dark"?"🌙":"☀️";
+  localStorage.setItem(LS_THEME,theme);
+}
+themeBtn.onclick=()=>{theme=theme==="dark"?"light":"dark";applyTheme();};
+applyTheme();
+
+// ---------- data dialog ----------
+const dlg=document.getElementById("dataDlg");
+const box=document.getElementById("dataBox");
+document.getElementById("dataBtn").onclick=()=>{
+  box.value=JSON.stringify(DATA,null,2);dlg.showModal();
+};
+document.getElementById("closeDlg").onclick=()=>dlg.close();
+document.getElementById("copyBtn").onclick=()=>{
+  box.select();
+  try{
+    if(navigator.clipboard){navigator.clipboard.writeText(box.value);}
+    else{document.execCommand("copy");}
+  }catch(e){}
+};
+document.getElementById("importBtn").onclick=()=>{
+  try{
+    const parsed=JSON.parse(box.value);
+    if(parsed&&parsed.days){DATA=parsed;saveData();dlg.close();render();}
+    else alert("That doesn't look like valid tracker data — make sure you copied the whole thing.");
+  }catch(e){alert("Couldn't parse that data. Make sure you pasted the complete export text.");}
+};
+
+// ---------- boot ----------
+loadData();
+renderBanner();
+render();
+</script>
+</body>
+</html>

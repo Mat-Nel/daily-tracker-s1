@@ -166,6 +166,39 @@
   .ckrow input{width:17px;height:17px;accent-color:var(--accent)}
   .setgrid label{font-size:12.5px;font-weight:600}
   .future-note{color:var(--muted);font-size:12px;margin-bottom:10px;font-style:italic}
+  .mainTabs{position:sticky;top:0;z-index:40;background:var(--bg);padding:8px 0;margin:0 0 12px}
+  .mtab{padding:9px 2px;font-size:12.5px}
+  .fab{position:fixed;right:max(18px,env(safe-area-inset-right));bottom:max(22px,calc(env(safe-area-inset-bottom) + 14px));
+    width:54px;height:54px;border-radius:50%;background:var(--accent);color:#fff;font-size:27px;border:none;
+    box-shadow:0 6px 18px rgba(0,0,0,.35);cursor:pointer;z-index:50;display:none;align-items:center;justify-content:center;line-height:1}
+  .fab.show{display:flex}
+  .toast{position:fixed;left:50%;transform:translateX(-50%) translateY(8px);bottom:max(88px,calc(env(safe-area-inset-bottom) + 80px));
+    background:var(--panel);border:1px solid var(--line);color:var(--text);padding:10px 15px;border-radius:11px;
+    font-size:13px;z-index:60;display:flex;gap:14px;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,.4);
+    opacity:0;pointer-events:none;transition:.25s;max-width:88%}
+  .toast.show{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+  .toast button{background:none;border:none;color:var(--accent);font-weight:700;cursor:pointer;font-size:13px;flex-shrink:0}
+  .emeter{display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:5px;background:var(--chk-empty);width:100%}
+  .emeter i{display:block;height:100%}
+  .daymeta .emeter{margin-top:8px}
+  .tab .emeter{margin:5px 4px 0}
+  .t-now{background:var(--accent);color:#fff}
+  .block.now{outline:2px solid var(--accent);outline-offset:-1px}
+  .sheet .opt{display:block;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);border-radius:9px;padding:12px 13px;font-size:13.5px;margin-top:8px;cursor:pointer;font-family:inherit}
+  .sheet .opt:hover{border-color:var(--accent)}
+  .sheet .opt.danger{color:var(--danger)}
+  .sheet .opt small{display:block;color:var(--muted);font-size:11px;font-weight:400}
+  .seg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .seg .sopt{flex:1 1 44%;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 7px;cursor:pointer;
+    font-size:12.5px;text-align:center;color:var(--muted);font-weight:600;font-family:inherit}
+  .seg .sopt.on{border-color:var(--accent);color:var(--accent)}
+  .adjpanel .adj{display:flex;align-items:center;gap:10px;padding:7px 2px;font-size:13px;border-bottom:1px solid var(--line)}
+  .adjpanel .adj:last-child{border-bottom:none}
+  .adjpanel .adj .an{flex:1}
+  .adjpanel .adj .an small{display:block;color:var(--muted);font-size:11px}
+  .adjpanel .rm{background:none;border:none;color:var(--danger);cursor:pointer;font-size:12.5px;font-weight:600;flex-shrink:0;padding:4px}
+  .blockact{color:var(--muted);font-size:15px;flex-shrink:0;padding:0 2px;align-self:center}
 </style>
 </head>
 <body>
@@ -184,9 +217,15 @@
     <div class="mtab" data-t="today">✓ Today</div>
     <div class="mtab" data-t="week">📅 Week</div>
     <div class="mtab" data-t="plan">⚙ Plan</div>
+    <div class="mtab" data-t="export">📤 Export</div>
   </div>
 
   <div id="app"></div>
+
+  <button class="fab" id="fab" aria-label="Quick add for this week">＋</button>
+  <div class="toast" id="toast"></div>
+  <dialog id="sheetDlg" class="sheet"><div id="sheetBody"></div></dialog>
+  <dialog id="quickDlg"><div id="quickBody"></div></dialog>
 
   <dialog id="dataDlg">
     <h3>Back up or move your data</h3>
@@ -259,7 +298,11 @@ const DEFAULT_EVENTS=[
    physical:false, habit:false, effort:"rest", note:"Protected social block — recovery counts as productive."},
 ];
 
-let DATA={settings:{...DEFAULT_SETTINGS}, events:DEFAULT_EVENTS.map(e=>({...e})), log:{}};
+// adjust: per-week overrides keyed by the week's start date (ISO) —
+//   events: one-off events for that week (same schema as regular events)
+//   skips:  [{evId, dow?}] occurrences dropped that week (no dow = whole week)
+//   deltas: {evId: ±hours} temporary changes to a quota/deliverable's hours
+let DATA={settings:{...DEFAULT_SETTINGS}, events:DEFAULT_EVENTS.map(e=>({...e})), log:{}, adjust:{}};
 
 const MORNING_BASE=["Light on / curtains open the moment the alarm sounds","Feet on floor — no snooze",
   "Water + supplements","Shower + dress (clothes were laid out)","Grab-and-go breakfast",
@@ -271,7 +314,7 @@ function loadData(){
   try{
     const s=localStorage.getItem(LS_KEY);
     if(s){const p=JSON.parse(s);
-      if(p&&p.settings&&p.events){DATA=p; DATA.settings={...DEFAULT_SETTINGS,...DATA.settings}; if(!DATA.log)DATA.log={}; return;}}
+      if(p&&p.settings&&p.events){DATA=p; DATA.settings={...DEFAULT_SETTINGS,...DATA.settings}; if(!DATA.log)DATA.log={}; if(!DATA.adjust)DATA.adjust={}; return;}}
   }catch(e){}
   // migrate history from the old tracker if present
   try{
@@ -279,7 +322,14 @@ function loadData(){
     if(old){const p=JSON.parse(old); if(p&&p.days)DATA.log=p.days;}
   }catch(e){}
 }
-function saveData(){try{localStorage.setItem(LS_KEY,JSON.stringify(DATA));}catch(e){console.error("save failed",e);}}
+function saveData(){
+  // prune empty adjustment weeks so the store stays tidy
+  if(DATA.adjust)for(const k of Object.keys(DATA.adjust)){
+    const a=DATA.adjust[k];
+    if(!(a.events&&a.events.length)&&!(a.skips&&a.skips.length)&&!(a.deltas&&Object.keys(a.deltas).length))delete DATA.adjust[k];
+  }
+  try{localStorage.setItem(LS_KEY,JSON.stringify(DATA));}catch(e){console.error("save failed",e);}
+}
 function rec(isoDate){
   if(!DATA.log[isoDate])DATA.log[isoDate]={m:Array(MORNING_BASE.length).fill(false),e:Array(EVENING_BASE.length).fill(false),h:{},b:{}};
   const d=DATA.log[isoDate];
@@ -308,6 +358,24 @@ let weekStart=startOfWeek(today);
 let selDate=new Date(today);
 let TAB="today";
 let wkDay=today.getDay();
+let wkView=startOfWeek(today); // week shown on the Week tab
+
+// ---------- week adjustments ----------
+const weekKeyOf=d=>iso(startOfWeek(d));
+function adjFor(wk){
+  if(!DATA.adjust)DATA.adjust={};
+  if(!DATA.adjust[wk])DATA.adjust[wk]={events:[],skips:[],deltas:{}};
+  const a=DATA.adjust[wk];
+  if(!a.events)a.events=[];if(!a.skips)a.skips=[];if(!a.deltas)a.deltas={};
+  return a;
+}
+function hasAdj(wk){
+  const a=DATA.adjust&&DATA.adjust[wk];
+  return !!(a&&((a.events&&a.events.length)||(a.skips&&a.skips.length)||(a.deltas&&Object.keys(a.deltas).length)));
+}
+function findEvent(id,wk){
+  return DATA.events.find(e=>e.id===id)||(wk?adjFor(wk).events.find(e=>e.id===id):null);
+}
 
 // ============================================================
 // SCHEDULER ENGINE
@@ -363,9 +431,11 @@ function avgAlert(c,s,e,ch){
   let sum=0,n=0;for(let t=s;t<e;t+=20){sum+=alertAt(t-c.wake,ch);n++;}
   return n?sum/n:0;
 }
-// Attention residue: demanding blocks need a real transition on either side.
+// Attention residue: demanding blocks need a real transition on either side —
+// and two high-effort blocks back-to-back need a genuinely longer reset.
 function marg(a,b){
   const hi=x=>x==="high"||x==="phys";
+  if(hi(a)&&hi(b))return 25;
   if(hi(a)||hi(b))return 15;
   if(a==="med"||b==="med")return 10;
   return 0;
@@ -397,8 +467,14 @@ function findSlot(c,dur,o){
   return best;
 }
 
-function buildWeek(){
-  const S=DATA.settings, ch=S.chrono, pad=S.pad?1.3:1;
+function buildWeek(wk){
+  const S=DATA.settings, ch=S.chrono;
+  // planning fallacy: people underestimate ~40–60%, and more on cognitively hard work
+  const padF=eff=>S.pad?(eff==="high"?1.4:eff==="med"?1.3:1.15):1;
+  const adj=(wk&&DATA.adjust&&DATA.adjust[wk])||{events:[],skips:[],deltas:{}};
+  const evs=DATA.events.concat(adj.events||[]);
+  const skipped=(ev,dow)=>(adj.skips||[]).some(s=>s.evId===ev.id&&(s.dow===undefined||s.dow===null||s.dow===dow));
+  const delta=ev=>+((adj.deltas||{})[ev.id]||0);
   const days={}, warnings=[], stats={};
   for(let d=0;d<7;d++)days[d]=newDay(d,S);
 
@@ -406,52 +482,55 @@ function buildWeek(){
   for(let d=0;d<7;d++){
     const c=days[d];
     addB(c,c.wake,c.wake+15,"Wake + light + water","fixed",
-      "Alarm across the room, curtains open immediately — morning light anchors tomorrow's wake-up too.");
+      "Alarm across the room, curtains open immediately — morning light anchors tomorrow's wake-up too.",{kind:"anchor"});
     addB(c,c.bed-30,c.bed,"Wind-down — screens dim, lights low","rest",
-      "Buffer between the day and sleep. Herbal tea, tomorrow's clothes out.");
-    addB(c,c.bed,c.bed,"Sleep","fixed",S.sleepH+" hrs to a "+f12(c.wake)+" wake.",{marker:true});
+      "Buffer between the day and sleep. Herbal tea, tomorrow's clothes out.",{kind:"anchor"});
+    addB(c,c.bed,c.bed,"Sleep","fixed",S.sleepH+" hrs to a "+f12(c.wake)+" wake.",{marker:true,kind:"anchor"});
   }
 
   // ---- 2. fixed events (+ travel as real low-effort blocks) ----
-  for(const ev of DATA.events.filter(e=>e.type==="fixed")){
+  for(const ev of evs.filter(e=>e.type==="fixed")){
     for(const d of ev.days||[]){
+      if(skipped(ev,d))continue;
       const c=days[d],s=hm(ev.start),e=hm(ev.end);
       if(s<c.wake)warnings.push(ev.name+" ("+DAYS[d]+") starts before your wake time — check the time or your wake anchor.");
       const clash=c.blocks.some(b=>!b.marker&&b.s<e&&s<b.e&&b.evId);
       if(clash)warnings.push(ev.name+" ("+DAYS[d]+") overlaps another fixed event.");
-      if(ev.travelBefore)addIfFree(c,s-ev.travelBefore,s,"Travel → "+ev.name,"low","Low-cognitive transition — attention residue clears on the way.",{evId:ev.id});
-      addB(c,s,e,ev.name,"fixed",ev.note,{evId:ev.id,drain:ev.effort});
-      if(ev.travelAfter)addIfFree(c,e,e+ev.travelAfter,"Travel from "+ev.name,"low","",{evId:ev.id});
+      if(ev.travelBefore)addIfFree(c,s-ev.travelBefore,s,"Travel → "+ev.name,"low","Low-cognitive transition — attention residue clears on the way.",{evId:ev.id,kind:"travel"});
+      addB(c,s,e,ev.name,"fixed",ev.note,{evId:ev.id,drain:ev.effort,kind:"fixed"});
+      if(ev.effort==="high")c.deep+=Math.round((e-s)/2); // draining anchors spend half-weight deep budget
+      if(ev.travelAfter)addIfFree(c,e,e+ev.travelAfter,"Travel from "+ev.name,"low","",{evId:ev.id,kind:"travel"});
     }
   }
   // draining anchors get a guaranteed decompress buffer after (placed once all fixed events exist)
-  for(const ev of DATA.events.filter(e=>e.type==="fixed"&&e.effort==="high")){
+  for(const ev of evs.filter(e=>e.type==="fixed"&&e.effort==="high")){
     for(const d of ev.days||[]){
+      if(skipped(ev,d))continue;
       const c=days[d],after=hm(ev.end)+(ev.travelAfter||0);
-      addIfFree(c,after,after+30,"Buffer / decompress","rest",ev.name+" drains you — no hard task lands here.");
+      addIfFree(c,after,after+30,"Buffer / decompress","rest",ev.name+" drains you — no hard task lands here.",{kind:"buffer"});
     }
   }
 
   // ---- 3. mornings: exercise straight after waking on its days, else a slow ramp ----
   // Morning workouts phase-advance the circadian clock (easier waking) and clear sleep inertia.
-  const morningPhys=DATA.events.filter(e=>e.type==="recurring"&&e.physical&&e.window==="morning");
+  const morningPhys=evs.filter(e=>e.type==="recurring"&&e.physical&&e.window==="morning");
   for(let d=0;d<7;d++){
     const c=days[d];
-    const phys=morningPhys.find(ev=>ev.days.includes(d));
+    const phys=morningPhys.find(ev=>ev.days.includes(d)&&!skipped(ev,d));
     if(phys){
       // straight after waking: movement + light clear sleep inertia and phase-advance the clock,
       // and the workout stays out of the peak cognitive window
       const slot=findSlot(c,phys.duration,{eff:phys.effort,phys:true,early:true,ch,win:[c.wake+15,c.wake+330]});
       if(slot){
-        addB(c,slot.t,slot.t+slot.d,phys.name,phys.effort,phys.note,{evId:phys.id});
+        addB(c,slot.t,slot.t+slot.d,phys.name,phys.effort,phys.note,{evId:phys.id,kind:"routine"});
         const g=gapsOf(c).find(g=>g.s>=slot.t+slot.d&&g.e-g.s>=25);
-        if(g)addB(c,g.s,Math.min(g.s+35,g.e),"Shower + grab-and-go breakfast","low","Buffer baked in — a long session is absorbed, not a crisis.");
+        if(g)addB(c,g.s,Math.min(g.s+35,g.e),"Shower + grab-and-go breakfast","low","Buffer baked in — a long session is absorbed, not a crisis.",{kind:"routine"});
       } else {c.warn.push(phys.name);warnings.push(phys.name+" didn't fit "+DAYS[d]+" morning — day too full before noon.");}
     } else {
       const want=S.morning, slot=findSlot(c,want,{eff:"low",ch,win:[c.wake+15,c.wake+want+120]})||
                               findSlot(c,45,{eff:"low",ch,win:[c.wake+15,c.wake+180]});
       if(slot)addB(c,slot.t,slot.t+slot.d,"Morning routine + breakfast","low",
-        "Budgeted for your slow self ("+slot.d+" min). Quick morning = banked buffer, never a deficit.");
+        "Budgeted for your slow self ("+slot.d+" min). Quick morning = banked buffer, never a deficit.",{kind:"routine"});
     }
   }
 
@@ -464,35 +543,37 @@ function buildWeek(){
       const cut=c.bed-S.caffH*60;
       const slot=findSlot(c,45,{eff:"low",ch,late:true,win:[hm("11:30"),hm("14:00")],shrink:true,minDur:30});
       if(slot)addB(c,slot.t,slot.t+slot.d,"Lunch + reset","low",
-        (slot.t+slot.d<=cut?"Last caffeine of the day. ":"")+"Step away from the desk — real recovery beats working through.");
+        (slot.t+slot.d<=cut?"Last caffeine of the day. ":"")+"Step away from the desk — real recovery beats working through.",{kind:"meal"});
     }
     const ds=findSlot(c,45,{eff:"low",ch,late:true,win:[hm("17:00"),dinnerBy],shrink:true,minDur:30});
-    if(ds)addB(c,ds.t,ds.t+ds.d,"Dinner","low","Done by "+f12(dinnerBy)+" — eating early protects sleep. Weeknights = meal-prep reheat, ~10 min active.");
+    if(ds)addB(c,ds.t,ds.t+ds.d,"Dinner","low","Done by "+f12(dinnerBy)+" — eating early protects sleep. Weeknights = meal-prep reheat, ~10 min active.",{kind:"meal"});
     else warnings.push("No dinner slot found before "+f12(dinnerBy)+" on "+DAYS[d]+" — an evening anchor is crowding it.");
   }
 
   // ---- 5. routines with fixed days but flexible times ----
-  for(const ev of DATA.events.filter(e=>e.type==="recurring"&&!(e.physical&&e.window==="morning"))){
+  for(const ev of evs.filter(e=>e.type==="recurring"&&!(e.physical&&e.window==="morning"))){
     for(const d of ev.days||[]){
+      if(skipped(ev,d))continue;
       const c=days[d];
       const win=ev.window==="morning"?[c.wake,c.wake+330]:
                 ev.window==="afternoon"?[hm("12:00"),hm("17:30")]:
                 ev.window==="evening"?[hm("17:00"),c.bed-30]:[c.wake,c.bed-30];
       const slot=findSlot(c,ev.duration,{eff:ev.effort,phys:ev.physical,ch,win,shrink:ev.effort==="rest"||ev.effort==="low",minDur:Math.max(45,ev.duration*.5)});
       if(slot)addB(c,slot.t,slot.t+slot.d,ev.name,ev.effort,
-        ev.note+(slot.d<ev.duration?" (trimmed to fit — "+slot.d+" min)":""),{evId:ev.id});
+        ev.note+(slot.d<ev.duration?" (trimmed to fit — "+slot.d+" min)":""),{evId:ev.id,kind:"routine"});
       else warnings.push(ev.name+" didn't fit on "+DAYS[d]+".");
     }
   }
   // daily practices
-  for(const ev of DATA.events.filter(e=>e.type==="daily")){
+  for(const ev of evs.filter(e=>e.type==="daily")){
     for(let d=0;d<7;d++){
+      if(skipped(ev,d))continue;
       const c=days[d];
       const win=ev.window==="morning"?[c.wake,c.wake+330]:
                 ev.window==="afternoon"?[hm("12:00"),hm("17:30")]:
                 ev.window==="evening"?[hm("17:00"),c.bed-30]:[c.wake,c.bed-30];
       const slot=findSlot(c,ev.duration,{eff:ev.effort,ch,win,shrink:true,minDur:Math.max(15,ev.duration*.5)});
-      if(slot)addB(c,slot.t,slot.t+slot.d,ev.name,ev.effort,ev.note,{evId:ev.id});
+      if(slot)addB(c,slot.t,slot.t+slot.d,ev.name,ev.effort,ev.note,{evId:ev.id,kind:"routine"});
       else warnings.push(ev.name+" didn't fit on "+DAYS[d]+".");
     }
   }
@@ -500,9 +581,10 @@ function buildWeek(){
   // ---- 6. weekly deliverables: earliest-deadline-first, bulk early + polish near due ----
   // Evenly spaced work before a deadline beats cramming (Ariely & Wertenbroch), and
   // the polish pass lands in the sharp morning window of the due day.
-  const dls=DATA.events.filter(e=>e.type==="deadline").sort((a,b)=>lin(a.dueDay)-lin(b.dueDay));
+  const dls=evs.filter(e=>e.type==="deadline"&&!skipped(e)).sort((a,b)=>lin(a.dueDay)-lin(b.dueDay));
   for(const ev of dls){
-    const total=Math.round(ev.hours*60*pad);
+    const hoursEff=Math.max(.5,ev.hours+delta(ev));
+    const total=Math.round(hoursEff*60*padF(ev.effort));
     const dueMin=hm(ev.dueTime), D=lin(ev.dueDay), dueC=days[ev.dueDay];
     const polishDur=total>100?Math.min(60,Math.max(30,Math.round(total*.25))):0;
     let bulkLeft=total-polishDur, placedMin=0, safety=0;
@@ -513,7 +595,7 @@ function buildWeek(){
       for(let back=1;back<=3;back++){
         const dl=D-back;if(dl<0)break;
         const c=days[ORDER[dl]];
-        if(ev.effort==="high"&&c.deep>270)continue; // ~4.5 h deep-work ceiling per day
+        if(ev.effort==="high"&&c.deep>300)continue; // ~5 h effective deep-work ceiling (draining anchors count half)
         const slot=findSlot(c,dur,{eff:ev.effort,ch,shrink:true,minDur:Math.min(45,dur)});
         if(slot&&(!pick||slot.sc>pick.slot.sc))pick={c,slot};
         if(slot&&slot.sc>=.85)break; // strong peak slot close to the due date — take it
@@ -525,7 +607,7 @@ function buildWeek(){
       if(!pick)break;
       addB(pick.c,pick.slot.t,pick.slot.t+pick.slot.d,ev.name+" — focused session",ev.effort,
         (pick.slot.sc>=.68?"Peak-alertness window, ":"Off-peak slot — the week is tight here; ")+
-        "ahead of the "+DAYS[ev.dueDay]+" "+f12(dueMin)+" deadline.",{evId:ev.id});
+        "ahead of the "+DAYS[ev.dueDay]+" "+f12(dueMin)+" deadline.",{evId:ev.id,kind:"work"});
       bulkLeft-=pick.slot.d;placedMin+=pick.slot.d;
     }
     if(bulkLeft>=25)warnings.push(ev.name+": "+bulkLeft+" min couldn't be scheduled before the "+DAYS[ev.dueDay]+" deadline — the days before are full.");
@@ -534,14 +616,14 @@ function buildWeek(){
     if(polishDur){
       let pSlot=(dueMin-60-dueC.wake>=60)?findSlot(dueC,polishDur,{eff:ev.effort,ch,notAfter:dueMin-60,shrink:true,minDur:25}):null;
       if(pSlot){addB(dueC,pSlot.t,pSlot.t+pSlot.d,ev.name+" — finish & polish",ev.effort,
-        "Due today "+f12(dueMin)+". Bulk was done earlier — this is the sharp-morning finish, never a night-before cram.",{evId:ev.id});placedMin+=pSlot.d;}
+        "Due today "+f12(dueMin)+". Bulk was done earlier — this is the sharp-morning finish, never a night-before cram.",{evId:ev.id,kind:"work"});placedMin+=pSlot.d;}
       else{
         let done=false;
         for(let back=1;back<=2&&!done;back++){
           const dl=D-back;if(dl<0)break;
           const slot=findSlot(days[ORDER[dl]],polishDur,{eff:ev.effort,ch,shrink:true,minDur:25});
           if(slot){addB(days[ORDER[dl]],slot.t,slot.t+slot.d,ev.name+" — finish & polish",ev.effort,
-            "Finished the day before the "+DAYS[ev.dueDay]+" deadline.",{evId:ev.id});placedMin+=slot.d;done=true;}
+            "Finished the day before the "+DAYS[ev.dueDay]+" deadline.",{evId:ev.id,kind:"work"});placedMin+=slot.d;done=true;}
         }
         if(!done)warnings.push(ev.name+": no room for the finishing pass before the deadline.");
       }
@@ -550,8 +632,9 @@ function buildWeek(){
   }
 
   // ---- 7. weekly quotas: spread across days (spacing effect), peaks first ----
-  for(const ev of DATA.events.filter(e=>e.type==="quota")){
-    let remaining=Math.round(ev.hoursWk*60), placedMin=0;
+  for(const ev of evs.filter(e=>e.type==="quota"&&!skipped(e))){
+    const hoursEff=Math.max(0,+ev.hoursWk+delta(ev));
+    let remaining=Math.round(hoursEff*60), placedMin=0;
     const pool=(ev.days&&ev.days.length?ev.days:[0,1,2,3,4,5,6]).slice().sort((a,b)=>lin(a)-lin(b));
     const perDay={};let guardCount=0;
     while(remaining>=45&&guardCount++<80){
@@ -561,7 +644,7 @@ function buildWeek(){
       let pick=null;
       for(const d of pool){
         const c=days[d];
-        if(ev.effort==="high"&&c.deep>270)continue;
+        if(ev.effort==="high"&&c.deep>300)continue;
         const slot=findSlot(c,len,{eff:ev.effort,ch,shrink:true,minDur:45});
         if(!slot)continue;
         const score=slot.sc-c.deep/900-(perDay[d]||0)*.06;
@@ -572,12 +655,12 @@ function buildWeek(){
       const tag=pick.slot.sc>=.72?ev.effort:(ev.effort==="high"?"med":ev.effort);
       addB(pick.c,pick.slot.t,pick.slot.t+pick.slot.d,ev.name+(tag==="high"?" — deep block":" — lighter block"),tag,
         tag===ev.effort?"Peak-alertness window — the demanding version of this work.":
-        "Off-peak window — admin, analysis, reading: the lower-gear version of this work.",{evId:ev.id});
+        "Off-peak window — admin, analysis, reading: the lower-gear version of this work.",{evId:ev.id,kind:"work"});
       remaining-=pick.slot.d;placedMin+=pick.slot.d;
       perDay[pick.d]=(perDay[pick.d]||0)+1;
     }
-    stats[ev.id]={placed:placedMin,target:Math.round(ev.hoursWk*60)};
-    if(remaining>=45)warnings.push(ev.name+": placed "+hrs(placedMin)+" h of the "+ev.hoursWk+" h target — the week is at capacity. Lower the target or free up mornings.");
+    stats[ev.id]={placed:placedMin,target:Math.round(hoursEff*60)};
+    if(remaining>=45)warnings.push(ev.name+": placed "+hrs(placedMin)+" h of the "+hoursEff+" h target — the week is at capacity. Lower the target or free up mornings.");
   }
 
   // ---- 8. fill: leftover gaps become explicit buffers and honest free time ----
@@ -586,22 +669,27 @@ function buildWeek(){
     for(const g of gapsOf(c)){
       const len=g.e-g.s;
       if(len<10)continue;
-      if(len<25)addB(c,g.s,g.e,"Micro-buffer","rest","Reset between blocks — attention residue clears here.");
+      if(len<25)addB(c,g.s,g.e,"Micro-buffer","rest","Reset between blocks — attention residue clears here.",{kind:"buffer"});
       else if((g.prevEff==="high"||g.nextEff==="high")&&len<=40)
-        addB(c,g.s,g.e,"Buffer / decompress","rest","Real transition after demanding work — this is what makes the next block start clean.");
-      else addB(c,g.s,g.e,"Free / recovery","rest","Genuinely off — recovery is scheduled, not leftover. Friends, games, nothing.");
+        addB(c,g.s,g.e,"Buffer / decompress","rest","Real transition after demanding work — this is what makes the next block start clean.",{kind:"buffer"});
+      else addB(c,g.s,g.e,"Free / recovery","rest","Genuinely off — recovery is scheduled, not leftover. Friends, games, nothing.",{kind:"free"});
     }
     // sleep-protection check
     for(const b of c.blocks)
-      if((b.eff==="high"||(b.evId&&DATA.events.find(e=>e.id===b.evId&&e.physical)))&&b.e>c.bed-120&&!b.marker)
+      if((b.eff==="high"||(b.evId&&evs.find(e=>e.id===b.evId&&e.physical)))&&b.e>c.bed-120&&!b.marker)
         warnings.push(DAYS[d]+": “"+b.label+"” ends within 2 h of bedtime — hard effort late can delay sleep.");
+    // effort-overload check: engaged (non-rest) time beyond ~10 h is a burnout schedule
+    const engaged=c.blocks.reduce((t,b)=>t+((b.eff==="high"||b.eff==="med"||b.eff==="fixed")&&!b.marker?b.e-b.s:0),0);
+    if(engaged>600)warnings.push(DAYS[d]+": "+hrs(engaged)+" h of engaged time — consider moving something to another day.");
   }
 
   return {days,warnings,stats};
 }
 
-let SCHED=buildWeek();
-function rebuild(){SCHED=buildWeek();}
+// One built schedule per week (adjustments make weeks differ); cache cleared on any data change.
+let schedCache={};
+function getSched(wk){wk=wk||weekKeyOf(today);if(!schedCache[wk])schedCache[wk]=buildWeek(wk);return schedCache[wk];}
+function rebuild(){schedCache={};}
 
 // ============================================================
 // HABITS derived from events
@@ -660,30 +748,47 @@ function allTimeRate(field){
 const appEl=document.getElementById("app");
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");}
 
-function blockHTML(b,i,r,interactive){
+function blockHTML(b,i,r,interactive,opts){
+  opts=opts||{};
   const [bc,tc,lbl]=E[b.eff]||E.fixed;
   const key=b.s+"|"+b.label;
   const done=r&&r.b&&r.b[key];
   const time=b.marker?f12(b.s):fr(b.s,b.e);
   const check=interactive&&!b.marker?`<div class="bbox">${done?"✓":""}</div>`:"";
-  return `<div class="block ${bc}${interactive&&!b.marker?" chk":""}${done?" done":""}" ${interactive&&!b.marker?`data-bk="${esc(key)}"`:""}>
+  const nowTag=opts.now?`<span class="tag t-now">Now</span>`:opts.next?`<span class="tag t-fixed">Next</span>`:"";
+  const act=opts.actions&&!b.marker?`<div class="blockact">⋯</div>`:"";
+  const dataAttr=interactive&&!b.marker?`data-bk="${esc(key)}"`:
+                 opts.actions&&!b.marker?`data-bi="${i}"`:"";
+  return `<div class="block ${bc}${(interactive||opts.actions)&&!b.marker?" chk":""}${done?" done":""}${opts.now?" now":""}" ${dataAttr}>
     ${check}
     <div class="time">${time}</div>
     <div class="body">
-      <div class="label">${esc(b.label)}<span class="tag ${tc}">${lbl}</span></div>
+      <div class="label">${esc(b.label)}<span class="tag ${tc}">${lbl}</span>${nowTag}</div>
       ${b.note?`<div class="note">${esc(b.note)}</div>`:""}
     </div>
+    ${act}
   </div>`;
+}
+function effMinutes(c){
+  let hi=0,md=0,lo=0;
+  for(const b of c.blocks){if(b.marker)continue;
+    if(b.eff==="high")hi+=b.e-b.s;else if(b.eff==="med"||b.eff==="fixed")md+=b.e-b.s;else if(b.eff==="low")lo+=b.e-b.s;}
+  return {hi,md,lo,span:c.bed-c.wake};
+}
+function emeterHTML(c){
+  const m=effMinutes(c);
+  const w=x=>Math.round(100*x/m.span);
+  return `<span class="emeter" title="effort mix"><i style="width:${w(m.hi)}%;background:var(--high)"></i><i style="width:${w(m.md)}%;background:var(--med)"></i><i style="width:${w(m.lo)}%;background:var(--low)"></i></span>`;
 }
 function dayMetaHTML(c){
   const S=DATA.settings;
   const cut=c.bed-S.caffH*60;
-  const deepH=hrs(c.deep);
   return `<div class="daymeta">
     <span class="pill">Wake ${f12(c.wake)}</span>
-    <span class="pill">Deep work ${deepH} h (cap ~4.5)</span>
+    <span class="pill">Deep work ${hrs(c.deep)} h (budget ~5)</span>
     <span class="pill">Caffeine cutoff ${f12(cut)}</span>
     <span class="pill">Lights out ${f12(c.bed)}</span>
+    ${emeterHTML(c)}
   </div>`;
 }
 
@@ -693,14 +798,17 @@ function renderToday(){
   const r=rec(selIso);
   const isFuture=selDate>today;
   const mr=checklistRate("m",weekStart),er=checklistRate("e",weekStart);
-  const atCurrentWeek=iso(weekStart)===iso(startOfWeek(today));
+  const curWk=iso(startOfWeek(today));
+  const atCurrentWeek=iso(weekStart)===curWk;
+  const wksAhead=Math.round((startOfWeek(weekStart)-startOfWeek(today))/(7*864e5));
   const HB=habitList();
+  const SC=getSched(weekKeyOf(selDate));
   let html="";
 
   html+=`<div class="weeknav">
     <button class="navb" id="prevW">‹</button>
-    <div class="label">${fmtRange(weekStart)}<small>${atCurrentWeek?"This week":"Past week"}</small></div>
-    <button class="navb" id="nextW"${atCurrentWeek?" disabled":""}>›</button>
+    <div class="label">${fmtRange(weekStart)}${hasAdj(iso(weekStart))?" ⚡":""}<small>${atCurrentWeek?"This week":wksAhead>0?(wksAhead===1?"Next week":"In "+wksAhead+" weeks"):"Past week"}</small></div>
+    <button class="navb" id="nextW"${wksAhead>=12?" disabled":""}>›</button>
   </div>`;
   html+=`<div class="daypick">`+[...Array(7)].map((_,i)=>{
     const d=addDays(weekStart,i);const di=iso(d);
@@ -708,11 +816,19 @@ function renderToday(){
     return `<div class="dp ${cls}" data-i="${i}"><div class="dn">${DAYS[d.getDay()]}</div><div class="dd">${d.getDate()}</div></div>`;
   }).join("")+`</div>`;
 
-  const c=SCHED.days[selDate.getDay()];
+  const c=SC.days[selDate.getDay()];
+  // live position: highlight the block happening right now, and the one up next
+  const isToday=selIso===iso(today);
+  let nowIdx=-1,nextIdx=-1;
+  if(isToday){
+    const nowD=new Date(),nowMin=nowD.getHours()*60+nowD.getMinutes();
+    c.blocks.forEach((b,i)=>{if(!b.marker&&nowIdx<0&&b.s<=nowMin&&nowMin<b.e)nowIdx=i;});
+    nextIdx=c.blocks.findIndex((b,i)=>!b.marker&&b.s>nowMin);
+  }
 
   if(isFuture){
     html+=`<div class="panel"><h2>Planned for ${DAYS[selDate.getDay()]}</h2>
-      <div class="future-note">Preview — check-offs unlock when the day arrives.</div>`;
+      <div class="future-note">Preview — check-offs unlock when the day arrives. Use ＋ to add a one-off for this week.</div>`;
     html+=c.blocks.map((b,i)=>blockHTML(b,i,null,false)).join("")+`</div>`;
   } else {
     // morning checklist
@@ -730,7 +846,7 @@ function renderToday(){
     html+=`<div class="panel">
       <h2>Today's plan <span class="rate"><b>${doneN}</b>/${totN} blocks</span></h2>
       <div class="ph">Built by the scheduler from your events — tap a block when it's done. A slow block is absorbed by the buffers, not a crisis.</div>`;
-    html+=c.blocks.map((b,i)=>blockHTML(b,i,r,true)).join("")+`</div>`;
+    html+=c.blocks.map((b,i)=>blockHTML(b,i,r,true,{now:i===nowIdx,next:i===nextIdx})).join("")+`</div>`;
 
     // habits + streaks
     html+=`<div class="panel">
@@ -783,10 +899,41 @@ function renderToday(){
 }
 
 // ---------- WEEK ----------
+function adjDescr(wk){
+  const a=adjFor(wk),out=[];
+  for(const ev of a.events)out.push({kind:"event",id:ev.id,name:ev.name,sub:"one-off · "+evSummary(ev)});
+  for(let i=0;i<a.skips.length;i++){
+    const s=a.skips[i],ev=findEvent(s.evId,wk);
+    out.push({kind:"skip",idx:i,name:(ev?ev.name:s.evId),sub:"skipped"+(s.dow!=null?" on "+DAYS[s.dow]:" this week")});
+  }
+  for(const id of Object.keys(a.deltas)){
+    const ev=findEvent(id,wk);
+    out.push({kind:"delta",id,name:(ev?ev.name:id),sub:(a.deltas[id]>0?"+":"")+a.deltas[id]+" h this week"});
+  }
+  return out;
+}
 function renderWeek(){
+  const wk=iso(wkView);
+  const SC=getSched(wk);
+  const isCur=wk===iso(startOfWeek(today));
+  const ahead=Math.round((wkView-startOfWeek(today))/(7*864e5));
   let html="";
-  if(SCHED.warnings.length)
-    html+=`<div class="warnbox"><b>Scheduler notes</b>${SCHED.warnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join("")}</div>`;
+
+  html+=`<div class="weeknav">
+    <button class="navb" id="wvPrev">‹</button>
+    <div class="label">${fmtRange(wkView)}${hasAdj(wk)?" ⚡":""}<small>${isCur?"This week":ahead===1?"Next week":ahead>1?"In "+ahead+" weeks":"Past week"}${hasAdj(wk)?" · adjusted":""}</small></div>
+    <button class="navb" id="wvNext"${ahead>=12?" disabled":""}>›</button>
+  </div>`;
+
+  if(SC.warnings.length)
+    html+=`<div class="warnbox"><b>Scheduler notes</b>${SC.warnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join("")}</div>`;
+
+  const adjs=adjDescr(wk);
+  if(adjs.length){
+    html+=`<div class="panel adjpanel"><h2>⚡ This week's changes <span class="rate">the scheduler reflows around these</span></h2>`+
+      adjs.map((a,i)=>`<div class="adj"><div class="an">${esc(a.name)}<small>${esc(a.sub)}</small></div>
+        <button class="rm" data-adjk="${a.kind}" data-adji="${a.kind==="skip"?a.idx:esc(a.id||"")}">remove</button></div>`).join("")+`</div>`;
+  }
 
   html+=`<div class="legend">
     <span><i class="dot" style="background:var(--high)"></i>High effort</span>
@@ -796,16 +943,18 @@ function renderWeek(){
     <span><i class="dot" style="background:var(--fixed)"></i>Fixed anchor</span>
   </div>`;
 
-  html+=`<div class="tabs">`+ORDER.map(d=>`<button class="tab ${d===wkDay?'active':''}" data-d="${d}">${DAYS[d]}</button>`).join("")+`</div>`;
-  const c=SCHED.days[wkDay];
-  html+=`<div class="panel">`+dayMetaHTML(c)+c.blocks.map((b,i)=>blockHTML(b,i,null,false)).join("")+`</div>`;
+  html+=`<div class="tabs">`+ORDER.map(d=>`<button class="tab ${d===wkDay?'active':''}" data-d="${d}">${DAYS[d]}${emeterHTML(SC.days[d])}</button>`).join("")+`</div>`;
+  const c=SC.days[wkDay];
+  html+=`<div class="panel">`+dayMetaHTML(c)+
+    `<div class="ph">Tap a block to skip it this week, tweak its event, or adjust hours.</div>`+
+    c.blocks.map((b,i)=>blockHTML(b,i,null,false,{actions:true})).join("")+`</div>`;
 
   html+=`<div class="panel"><h2>The science this schedule runs on</h2><ul class="principles">
     <li><b>Fixed wake time, all 7 days.</b> The single biggest lever — your body pre-loads cortisol before a consistent alarm, which is what makes getting up feel possible. <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC10757201/" target="_blank">[sleep-hygiene evidence]</a></li>
     <li><b>Hard work lands 2–6.5 h after waking.</b> Attention peaks there, dips 1–4 PM (a real circadian dip, not just lunch), and gets a late-afternoon second wind — high-effort blocks are placed by this curve, shifted for your chronotype. <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC6430172/" target="_blank">[circadian attention]</a> <a href="https://pubmed.ncbi.nlm.nih.gov/15892914/" target="_blank">[post-lunch dip]</a></li>
     <li><b>Effort alternates, never stacks.</b> Switching straight between demanding tasks leaves "attention residue" that cuts performance — every high block gets a genuine buffer after it. <a href="https://www.sciencedirect.com/science/article/abs/pii/S0749597809000399" target="_blank">[Leroy 2009]</a></li>
     <li><b>Sessions run ~90–120 min.</b> Long enough to pass startup friction, short enough to match ultradian attention cycles; a weekly quota becomes several such sessions, never one marathon.</li>
-    <li><b>Your time estimates are padded ×1.3.</b> People underestimate task time by 40–60% (the planning fallacy) — the schedule budgets for your realistic self. <a href="https://en.wikipedia.org/wiki/Planning_fallacy" target="_blank">[planning fallacy]</a></li>
+    <li><b>Your time estimates are padded — more for harder work.</b> People underestimate task time by 40–60% (the planning fallacy), and worst on cognitively demanding tasks: high effort ×1.4, medium ×1.3, low ×1.15. <a href="https://en.wikipedia.org/wiki/Planning_fallacy" target="_blank">[planning fallacy]</a></li>
     <li><b>Deadline work is spaced, with a morning-of polish.</b> Evenly spaced effort beats end-loading it, and distributed sessions consolidate learning better than massing them. <a href="https://web.mit.edu/ariely/www/MIT/Papers/deadlines.pdf" target="_blank">[Ariely & Wertenbroch]</a></li>
     <li><b>Exercise goes early.</b> Morning training phase-advances the body clock (easier waking) and clears sleep inertia; nothing hard is scheduled within ~2.5 h of bed because late intense effort delays sleep. <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC10636512/" target="_blank">[exercise-timing review]</a></li>
     <li><b>Caffeine cutoff ${DATA.settings.caffH} h before bed.</b> Even 6 h out, caffeine measurably cuts sleep — the cutoff is pinned to your bedtime, not the clock. <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC3805807/" target="_blank">[Drake et al.]</a></li>
@@ -816,6 +965,52 @@ function renderWeek(){
   html+=`<div class="sub">This is a framework, not a stopwatch — buffers exist so a slow morning is absorbed, not a crisis. Reconcile planned vs. actual once a week and nudge the quotas in the Plan tab.</div>`;
   appEl.innerHTML=html;
   document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{wkDay=+t.dataset.d;render();});
+  document.getElementById("wvPrev").onclick=()=>{wkView=addDays(wkView,-7);render();};
+  const wn=document.getElementById("wvNext");
+  wn.onclick=()=>{if(!wn.disabled){wkView=addDays(wkView,7);render();}};
+  document.querySelectorAll(".block[data-bi]").forEach(el=>el.onclick=()=>openBlockSheet(wk,wkDay,+el.dataset.bi));
+  document.querySelectorAll(".rm").forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const a=adjFor(wk);
+    if(b.dataset.adjk==="event")a.events=a.events.filter(ev=>ev.id!==b.dataset.adji);
+    else if(b.dataset.adjk==="skip")a.skips.splice(+b.dataset.adji,1);
+    else delete a.deltas[b.dataset.adji];
+    saveData();rebuild();render();toast("Change removed — week rebuilt.");
+  });
+}
+
+// tap a block on the Week tab -> contextual actions for that occurrence
+function openBlockSheet(wk,dow,bi){
+  const SC=getSched(wk);
+  const b=SC.days[dow].blocks[bi];
+  if(!b)return;
+  const ev=b.evId?findEvent(b.evId,wk):null;
+  const isOneOff=ev&&adjFor(wk).events.some(e=>e.id===ev.id);
+  let opts="";
+  if(ev){
+    if(isOneOff)opts+=`<button class="opt danger" data-a="rmoneoff">Remove this one-off<small>Added just for this week</small></button>`;
+    else{
+      if(ev.type==="fixed"||ev.type==="recurring"||ev.type==="daily")
+        opts+=`<button class="opt" data-a="skipday">Skip on ${DAYS[dow]} — this week only<small>The scheduler reflows the day around the gap</small></button>`;
+      if(ev.type==="deadline"||ev.type==="quota")
+        opts+=`<button class="opt" data-a="skipweek">Skip “${esc(ev.name)}” this week<small>All its sessions drop out of this week</small></button>
+               <button class="opt" data-a="hours">Adjust its hours this week…<small>e.g. +2 h crunch or −3 h light week</small></button>`;
+      opts+=`<button class="opt" data-a="edit">Edit the event permanently…</button>`;
+    }
+  } else opts+=`<div class="ph" style="margin:6px 0 0">This block is generated (meals, buffers, free time) — it moves automatically when real events change.</div>`;
+  opts+=`<button class="opt" data-a="close">Cancel</button>`;
+  sheetBody.innerHTML=`<h3>${esc(b.label)}</h3><p>${fr(b.s,b.e)} · ${DAYS[dow]}${hasAdj(wk)?" · adjusted week":""}</p>`+opts;
+  sheetDlg.showModal();
+  sheetBody.querySelectorAll(".opt").forEach(o=>o.onclick=()=>{
+    const a=o.dataset.a;sheetDlg.close();
+    if(a==="skipday"){adjFor(wk).skips.push({evId:ev.id,dow});saveData();rebuild();render();
+      toast("Skipped "+ev.name+" on "+DAYS[dow]+".",()=>{const s=adjFor(wk).skips;s.splice(s.findIndex(x=>x.evId===ev.id&&x.dow===dow),1);saveData();rebuild();render();});}
+    if(a==="skipweek"){adjFor(wk).skips.push({evId:ev.id});saveData();rebuild();render();
+      toast("Skipped "+ev.name+" this week.",()=>{const s=adjFor(wk).skips;s.splice(s.findIndex(x=>x.evId===ev.id&&x.dow===undefined),1);saveData();rebuild();render();});}
+    if(a==="hours")openQuickDlg(wk,"boost",ev.id);
+    if(a==="edit")openEvDlg(ev,ev.type);
+    if(a==="rmoneoff"){const aj=adjFor(wk);aj.events=aj.events.filter(e=>e.id!==ev.id);saveData();rebuild();render();toast("One-off removed.");}
+  });
 }
 
 // ---------- PLAN ----------
@@ -830,7 +1025,7 @@ function evSummary(ev){
   const dstr=d=>(d||[]).slice().sort((a,b)=>lin(a)-lin(b)).map(x=>DAYS[x]).join(" ");
   if(ev.type==="fixed")return dstr(ev.days)+" · "+f12(hm(ev.start))+"–"+f12(hm(ev.end))+(ev.travelBefore?" · +"+ev.travelBefore+" min travel":"");
   if(ev.type==="deadline")return "due "+DAYS[ev.dueDay]+" "+f12(hm(ev.dueTime))+" · ~"+ev.hours+" h · "+ev.effort+" effort";
-  if(ev.type==="quota"){const st=SCHED.stats[ev.id];return ev.hoursWk+" h/week"+(st?" · scheduled "+hrs(st.placed)+" h":"")+" · ≤"+(ev.maxSession||120)+" min sessions";}
+  if(ev.type==="quota"){const st=getSched().stats[ev.id];return ev.hoursWk+" h/week"+(st?" · scheduled "+hrs(st.placed)+" h":"")+" · ≤"+(ev.maxSession||120)+" min sessions";}
   if(ev.type==="recurring")return dstr(ev.days)+" · "+ev.duration+" min · "+ev.window+(ev.habit?" · streak-tracked":"");
   return "daily · "+ev.duration+" min · "+ev.window+(ev.habit?" · streak-tracked":"");
 }
@@ -874,8 +1069,9 @@ function renderPlan(){
     html+=`<button class="addbtn" data-add="${t}">+ Add</button></div>`;
   }
 
-  if(SCHED.warnings.length)
-    html+=`<div class="warnbox"><b>Scheduler notes</b>${SCHED.warnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join("")}</div>`;
+  const curWarn=getSched().warnings;
+  if(curWarn.length)
+    html+=`<div class="warnbox"><b>Scheduler notes (this week)</b>${curWarn.map(w=>`<div>⚠ ${esc(w)}</div>`).join("")}</div>`;
 
   html+=`<div class="sub">Every change rebuilds the week instantly — check the Week tab to see where things landed, and the Today tab to live it.</div>`;
   appEl.innerHTML=html;
@@ -985,7 +1181,9 @@ function openEvDlg(ev,type){
     const ne={...ev,name,note:(v("f-note")||"").trim(),effort:v("f-eff")||ev.effort};
     if(type==="fixed"){ne.days=days;ne.start=v("f-start");ne.end=v("f-end");
       ne.travelBefore=Math.max(0,+v("f-tb")||0);ne.travelAfter=Math.max(0,+v("f-ta")||0);
-      if(hm(ne.end)<=hm(ne.start)){alert("End must be after start.");return;}}
+      if(hm(ne.end)<=hm(ne.start)){alert("End must be after start.");return;}
+      const conf=fixedConflicts(DATA.events,days,hm(ne.start),hm(ne.end),ev.id);
+      if(conf.length&&!confirm("This overlaps "+conf.join(", ")+".\nSave anyway?"))return;}
     if(type==="deadline"){ne.dueDay=+v("f-dueDay");ne.dueTime=v("f-dueTime");ne.hours=Math.max(.5,+v("f-hours")||1);}
     if(type==="quota"){ne.hoursWk=Math.max(1,+v("f-hoursWk")||1);ne.maxSession=+v("f-maxSession");ne.days=days&&days.length?days:[0,1,2,3,4,5,6];}
     if(type==="recurring"||type==="daily"){ne.duration=Math.max(10,+v("f-duration")||30);ne.window=v("f-window");
@@ -993,6 +1191,206 @@ function openEvDlg(ev,type){
     if(isNew){ne.id="ev"+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);DATA.events.push(ne);}
     else{const i=DATA.events.findIndex(e=>e.id===ev.id);DATA.events[i]=ne;}
     saveData();rebuild();evDlg.close();render();
+  };
+}
+
+// ---------- toast ----------
+let toastTimer=null;
+function toast(msg,undo){
+  const t=document.getElementById("toast");
+  t.innerHTML=esc(msg)+(undo?'<button id="toastUndo">Undo</button>':"");
+  if(undo)document.getElementById("toastUndo").onclick=()=>{t.classList.remove("show");undo();};
+  t.classList.add("show");
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),4200);
+}
+
+// warn at input time when a new fixed time collides with an existing anchor
+function fixedConflicts(evList,days,sMin,eMin,exceptId){
+  const out=[];
+  for(const ev of evList){
+    if(ev.type!=="fixed"||ev.id===exceptId)continue;
+    for(const d of days||[])
+      if((ev.days||[]).includes(d)&&hm(ev.start)<eMin&&sMin<hm(ev.end))
+        out.push(ev.name+" ("+DAYS[d]+" "+f12(hm(ev.start))+"–"+f12(hm(ev.end))+")");
+  }
+  return out;
+}
+
+// ---------- quick add: on-the-fly changes for one week ----------
+const sheetDlg=document.getElementById("sheetDlg"),sheetBody=document.getElementById("sheetBody");
+const quickDlg=document.getElementById("quickDlg"),quickBody=document.getElementById("quickBody");
+function openQuickDlg(wk,mode,presetId){
+  mode=mode||"event";
+  const ws=new Date(wk+"T00:00:00");
+  const dayOpts=(sel)=>[...Array(7)].map((_,i)=>{
+    const d=addDays(ws,i);
+    return `<option value="${d.getDay()}" ${d.getDay()===sel?"selected":""}>${DAYS[d.getDay()]} ${d.getDate()}</option>`;
+  }).join("");
+  const targets=DATA.events.filter(e=>e.type==="quota"||e.type==="deadline");
+  function form(){
+    let f=`<h3>⚡ This week only</h3>
+    <p>Changes here apply to the week of ${fmtRange(ws)} — the scheduler rebuilds the week around them. Your normal template stays untouched.</p>
+    <div class="seg">
+      <button class="sopt ${mode==="event"?"on":""}" data-m="event">One-off event</button>
+      <button class="sopt ${mode==="task"?"on":""}" data-m="task">One-off task</button>
+      <button class="sopt ${mode==="boost"?"on":""}" data-m="boost">More / less hours</button>
+    </div>`;
+    if(mode==="event"){
+      f+=`<div class="frow"><label>What is it?</label><input type="text" id="q-name" placeholder="e.g. Doctor appointment"></div>
+      <div class="half">
+        <div class="frow"><label>Day</label><select id="q-day">${dayOpts(today.getDay())}</select></div>
+        <div class="frow"><label>How draining?</label><select id="q-eff">
+          <option value="low">Easy</option><option value="med">Moderate</option><option value="high">Draining</option></select></div>
+      </div>
+      <div class="half">
+        <div class="frow"><label>Starts</label><input type="time" id="q-start" value="15:00"></div>
+        <div class="frow"><label>Ends</label><input type="time" id="q-end" value="16:00"></div>
+      </div>
+      <div class="frow"><label>Travel before (min)</label><input type="number" id="q-tb" min="0" max="120" step="5" value="0">
+        <div class="hint">Everything flexible moves out of the way; draining events get a decompress buffer after.</div></div>`;
+    }
+    if(mode==="task"){
+      f+=`<div class="frow"><label>What needs to get done?</label><input type="text" id="q-name" placeholder="e.g. Conference abstract"></div>
+      <div class="half">
+        <div class="frow"><label>Due day</label><select id="q-day">${dayOpts((today.getDay()+2)%7)}</select></div>
+        <div class="frow"><label>Due time</label><input type="time" id="q-time" value="17:00"></div>
+      </div>
+      <div class="half">
+        <div class="frow"><label>Honest hours</label><input type="number" id="q-hours" min="0.5" max="20" step="0.5" value="2"></div>
+        <div class="frow"><label>Cognitive demand</label><select id="q-eff">
+          <option value="high">High — needs my peak</option><option value="med" selected>Medium</option><option value="low">Low</option></select></div>
+      </div>
+      <div class="hint" style="margin-bottom:10px">Sessions land in peak-alertness windows before it's due, padded for the planning fallacy, with a finishing pass near the deadline.</div>`;
+    }
+    if(mode==="boost"){
+      if(!targets.length)f+=`<div class="ph">No quotas or deliverables yet — add one in the Plan tab first.</div>`;
+      else f+=`<div class="frow"><label>Which workload?</label><select id="q-target">${targets.map(t=>`<option value="${t.id}" ${t.id===presetId?"selected":""}>${esc(t.name)} (${t.type==="quota"?t.hoursWk+" h/wk":"~"+t.hours+" h"})</option>`).join("")}</select></div>
+      <div class="frow"><label>Change for this week (hours)</label><input type="number" id="q-delta" step="0.5" value="2" min="-40" max="40">
+        <div class="hint">Positive = crunch week (+2 h), negative = lighten the load (−3 h). Sessions are re-spread across the week either way.</div></div>`;
+    }
+    f+=`<div class="drow"><button class="btn" id="q-save">Apply to this week</button><button class="btn sec" id="q-cancel">Cancel</button></div>`;
+    quickBody.innerHTML=f;
+    quickBody.querySelectorAll(".sopt").forEach(s=>s.onclick=()=>{mode=s.dataset.m;form();});
+    document.getElementById("q-cancel").onclick=()=>quickDlg.close();
+    document.getElementById("q-save").onclick=()=>{
+      const v=id=>{const el=document.getElementById(id);return el?el.value:undefined;};
+      const a=adjFor(wk);
+      if(mode==="event"){
+        const name=(v("q-name")||"").trim();
+        if(!name){alert("Give it a name.");return;}
+        if(hm(v("q-end"))<=hm(v("q-start"))){alert("End must be after start.");return;}
+        const conf=fixedConflicts(DATA.events.concat(a.events),[+v("q-day")],hm(v("q-start")),hm(v("q-end")));
+        if(conf.length&&!confirm("This overlaps "+conf.join(", ")+".\nAdd it anyway?"))return;
+        a.events.push({id:"adj"+Date.now().toString(36),type:"fixed",name,days:[+v("q-day")],
+          start:v("q-start"),end:v("q-end"),travelBefore:Math.max(0,+v("q-tb")||0),travelAfter:0,
+          effort:v("q-eff"),note:"One-off this week."});
+        toast("Added — the week reflowed around it.");
+      }
+      if(mode==="task"){
+        const name=(v("q-name")||"").trim();
+        if(!name){alert("Give it a name.");return;}
+        a.events.push({id:"adj"+Date.now().toString(36),type:"deadline",name,dueDay:+v("q-day"),
+          dueTime:v("q-time"),hours:Math.max(.5,+v("q-hours")||1),effort:v("q-eff"),note:"One-off this week."});
+        toast("Scheduled ahead of its deadline.");
+      }
+      if(mode==="boost"){
+        const id=v("q-target");if(!id)return;
+        const d=+v("q-delta")||0;
+        if(d===0)delete a.deltas[id];else a.deltas[id]=(+a.deltas[id]||0)+d;
+        toast((d>0?"+":"")+d+" h this week — sessions re-spread.");
+      }
+      saveData();rebuild();quickDlg.close();render();
+    };
+  }
+  form();
+  quickDlg.showModal();
+}
+document.getElementById("fab").onclick=()=>{
+  const wk=TAB==="week"?iso(wkView):weekKeyOf(selDate);
+  openQuickDlg(wk);
+};
+
+// ---------- EXPORT (.ics for Google Calendar) ----------
+let exWeeks=1;
+let exInc={fixed:true,work:true,routine:true,meal:true,travel:false,anchor:false,buffer:false,free:false};
+const EX_CATS=[
+  ["fixed","Fixed anchors","class, meetings, work"],
+  ["work","Focused work sessions","deadline + quota blocks"],
+  ["routine","Routines","gym, meal prep, morning ramp"],
+  ["meal","Meals","lunch, dinner"],
+  ["travel","Travel blocks",""],
+  ["anchor","Sleep anchors","wake, wind-down"],
+  ["buffer","Buffers",""],
+  ["free","Free / recovery",""]
+];
+function icsEscape(s){return String(s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n");}
+function icsFold(line){let out="";while(line.length>73){out+=line.slice(0,73)+"\r\n ";line=line.slice(73);}return out+line;}
+function icsDT(date,min){return date.getFullYear()+p2(date.getMonth()+1)+p2(date.getDate())+"T"+p2(Math.floor(min/60))+p2(min%60)+"00";}
+function buildICS(){
+  const L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//DailyTracker//Schedule//EN","CALSCALE:GREGORIAN",
+    "X-WR-CALNAME:My weekly schedule"];
+  const stamp=new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d+/,"");
+  let n=0;
+  for(let w=0;w<exWeeks;w++){
+    const ws=addDays(startOfWeek(today),7*w),wk=iso(ws),SC=getSched(wk);
+    for(let i=0;i<7;i++){
+      const date=addDays(ws,i),dow=date.getDay();
+      for(const b of SC.days[dow].blocks){
+        if(b.marker||b.e<=b.s)continue;
+        if(!exInc[b.kind||"free"])continue;
+        const slug=b.label.replace(/[^a-z0-9]/gi,"").slice(0,16).toLowerCase();
+        L.push("BEGIN:VEVENT",
+          "UID:"+wk+"-"+dow+"-"+b.s+"-"+slug+"@daily-tracker",
+          "DTSTAMP:"+stamp,
+          "DTSTART:"+icsDT(date,b.s),
+          "DTEND:"+icsDT(date,b.e),
+          icsFold("SUMMARY:"+icsEscape(b.label)),
+          icsFold("DESCRIPTION:"+icsEscape("Effort: "+(b.eff||"—")+(b.note?" — "+b.note:""))),
+          "CATEGORIES:"+(b.eff||"").toUpperCase(),
+          "END:VEVENT");
+        n++;
+      }
+    }
+  }
+  L.push("END:VCALENDAR");
+  return {text:L.join("\r\n"),count:n};
+}
+function renderExport(){
+  let html=`<div class="panel"><h2>Export to Google Calendar</h2>
+    <div class="ph">Builds a standard .ics file from your generated schedule — including any ⚡ week adjustments. Times are exported in your local time zone.</div>
+    <div class="frow"><label>How much to export</label><select id="ex-weeks">
+      ${[["1","This week"],["2","Next 2 weeks"],["4","Next 4 weeks"],["8","Next 8 weeks"]].map(o=>`<option value="${o[0]}" ${+o[0]===exWeeks?"selected":""}>${o[1]}</option>`).join("")}</select>
+      <div class="hint">Each week is exported as it's actually scheduled — an adjusted week exports its adjusted plan.</div></div>
+    <div class="frow"><label>What to include</label>
+      ${EX_CATS.map(c=>`<label class="ckrow"><input type="checkbox" data-cat="${c[0]}" ${exInc[c[0]]?"checked":""}> ${c[1]}${c[2]?` <span style="color:var(--muted);font-weight:400">· ${c[2]}</span>`:""}</label>`).join("")}
+      <div class="hint">Buffers and free time are off by default so your calendar stays readable — the schedule still honors them here.</div></div>
+    <div class="drow">
+      <button class="btn" id="ex-dl">⬇ Download .ics</button>
+      <button class="btn sec" id="ex-copy">Copy .ics text</button>
+    </div>
+  </div>
+  <div class="panel"><h2>Importing into Google Calendar</h2>
+    <ul class="principles">
+      <li><b>On desktop:</b> calendar.google.com → gear icon → <b>Settings → Import &amp; export → Import</b> → select the downloaded file. Tip: create a separate calendar (e.g. "My schedule") first and import into it, so you can toggle or delete the whole thing in one tap.</li>
+      <li><b>On iPhone:</b> download the file, open it from Files/Share sheet, or import via the desktop site — the Google Calendar app itself can't import files.</li>
+      <li><b>Re-exporting after changes:</b> events use stable IDs, so re-importing an updated file into the same calendar updates blocks in place rather than duplicating them.</li>
+    </ul></div>`;
+  appEl.innerHTML=html;
+  document.getElementById("ex-weeks").onchange=e=>{exWeeks=+e.target.value;};
+  document.querySelectorAll("[data-cat]").forEach(cb=>cb.onchange=()=>{exInc[cb.dataset.cat]=cb.checked;});
+  document.getElementById("ex-dl").onclick=()=>{
+    const {text,count}=buildICS();
+    const blob=new Blob([text],{type:"text/calendar;charset=utf-8"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);a.download="weekly-schedule.ics";
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    toast(count+" events exported — import the file into Google Calendar.");
+  };
+  document.getElementById("ex-copy").onclick=()=>{
+    const {text,count}=buildICS();
+    try{navigator.clipboard.writeText(text);toast(count+" events copied as .ics text.");}
+    catch(e){alert("Couldn't copy — use Download instead.");}
   };
 }
 
@@ -1009,12 +1407,15 @@ function renderBanner(){
 }
 const SUBS={today:"Checklists keep you on routine · habits build streaks · today's plan comes from the scheduler.",
   week:"Your week, generated from your events — hard work in peak windows, real buffers, protected sleep.",
-  plan:"Feed it your commitments — it builds the week around your biology."};
+  plan:"Feed it your commitments — it builds the week around your biology.",
+  export:"Take the generated schedule with you — one file, straight into Google Calendar."};
 function render(){
   document.querySelectorAll(".mtab").forEach(t=>t.classList.toggle("active",t.dataset.t===TAB));
   document.getElementById("pageSub").textContent=SUBS[TAB];
+  document.getElementById("fab").classList.toggle("show",TAB==="today"||TAB==="week");
   if(TAB==="today")renderToday();
   else if(TAB==="week")renderWeek();
+  else if(TAB==="export")renderExport();
   else renderPlan();
 }
 document.querySelectorAll(".mtab").forEach(t=>t.onclick=()=>{TAB=t.dataset.t;render();});
@@ -1035,7 +1436,7 @@ document.getElementById("copyBtn").onclick=()=>{box.select();
   try{if(navigator.clipboard)navigator.clipboard.writeText(box.value);else document.execCommand("copy");}catch(e){}};
 document.getElementById("importBtn").onclick=()=>{
   try{const p=JSON.parse(box.value);
-    if(p&&p.settings&&p.events){DATA=p;if(!DATA.log)DATA.log={};saveData();rebuild();dlg.close();render();}
+    if(p&&p.settings&&p.events){DATA=p;if(!DATA.log)DATA.log={};if(!DATA.adjust)DATA.adjust={};saveData();rebuild();dlg.close();render();}
     else alert("That doesn't look like valid tracker data — make sure you copied the whole thing.");
   }catch(e){alert("Couldn't parse that data. Make sure you pasted the complete export text.");}};
 

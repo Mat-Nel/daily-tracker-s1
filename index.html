@@ -228,8 +228,20 @@
   .genbtn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:11px;padding:13px;
     font-size:14.5px;font-weight:700;cursor:pointer;margin-bottom:13px;box-shadow:0 4px 14px rgba(124,108,240,.3)}
   .genbtn:disabled{opacity:.45;cursor:default;box-shadow:none}
+  .genbtn.quiet{background:var(--panel2);color:var(--text);border:1px solid var(--line);box-shadow:none;font-weight:600}
+  @keyframes genpulse{0%,100%{box-shadow:0 4px 14px rgba(124,108,240,.3)}50%{box-shadow:0 4px 22px rgba(124,108,240,.65)}}
+  .genbtn.pulse{animation:genpulse 1.6s ease-in-out infinite}
   .steps li{margin:8px 0 8px 18px;font-size:13px;color:var(--muted)}
   .steps b{color:var(--text)}
+  .steprow{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);
+    border-radius:9px;margin:6px 0;font-size:12.5px;color:var(--muted);cursor:pointer;transition:.12s}
+  .steprow:hover{border-color:var(--accent)}
+  .steprow b:first-child{color:var(--accent);font-size:13px;flex-shrink:0}
+  .steprow span b{color:var(--text)}
+  .linkbtn{background:none;border:none;color:var(--accent);cursor:pointer;font-size:12.5px;font-weight:600;padding:0;font-family:inherit}
+  .editck{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 6px}
+  .editck:hover{color:var(--accent)}
+  .wg-date{display:block;font-size:8.5px;font-weight:400;letter-spacing:0}
 </style>
 </head>
 <body>
@@ -328,6 +340,10 @@ const EXAMPLE_EVENTS=[
    physical:false, habit:false, effort:"low", note:"One weekly load."},
   {id:"datenight",type:"recurring", name:"Date night / friends", days:[5], duration:240, window:"evening",
    physical:false, habit:false, effort:"rest", note:"Protected social block — recovery counts as productive."},
+  {id:"commAM", type:"recurring", name:"Commute to campus", days:[1,2,3,4,5], duration:30, window:"morning",
+   physical:false, habit:false, effort:"low", note:"Green Line — a low-cognitive transition into the day."},
+  {id:"commPM", type:"recurring", name:"Commute home", days:[1,2,3,4,5], duration:30, window:"evening",
+   physical:false, habit:false, effort:"low", note:""},
 ];
 
 // adjust: per-week overrides keyed by the week's start date (ISO) —
@@ -350,10 +366,13 @@ function applySchedule(){
 }
 
 const MORNING_BASE=["Light on / curtains open the moment the alarm sounds","Feet on floor — no snooze",
-  "Water + supplements","Shower + dress (clothes were laid out)","Grab-and-go breakfast",
-  "Bag packed: lunch + tea kit","Out the door on time"];
+  "Water (before anything else)","Shower + dress (clothes were laid out)","Breakfast",
+  "Bag / gear ready for the day","Out the door (or at the desk) on time"];
 const EVENING_BASE=["Dinner finished by the dinner cutoff","Tomorrow's plan glanced at — first block known",
   "Clothes laid out, bag packed for morning","Screens down / wind-down started","Lights out on time"];
+// checklists are editable per schedule; stored outside settings so edits never mark the schedule stale
+const MLIST=()=>DATA.mList&&DATA.mList.length?DATA.mList:MORNING_BASE;
+const ELIST=()=>DATA.eList&&DATA.eList.length?DATA.eList:EVENING_BASE;
 
 function loadData(){
   try{
@@ -384,10 +403,10 @@ function saveData(){
   try{localStorage.setItem(LS_KEY,JSON.stringify(DATA));}catch(e){console.error("save failed",e);}
 }
 function rec(isoDate){
-  if(!DATA.log[isoDate])DATA.log[isoDate]={m:Array(MORNING_BASE.length).fill(false),e:Array(EVENING_BASE.length).fill(false),h:{},b:{}};
+  if(!DATA.log[isoDate])DATA.log[isoDate]={m:Array(MLIST().length).fill(false),e:Array(ELIST().length).fill(false),h:{},b:{}};
   const d=DATA.log[isoDate];
-  if(!d.m||d.m.length!==MORNING_BASE.length)d.m=Array(MORNING_BASE.length).fill(false);
-  if(!d.e||d.e.length!==EVENING_BASE.length)d.e=Array(EVENING_BASE.length).fill(false);
+  if(!d.m||d.m.length!==MLIST().length)d.m=Array(MLIST().length).fill(false);
+  if(!d.e||d.e.length!==ELIST().length)d.e=Array(ELIST().length).fill(false);
   if(!d.h)d.h={}; if(!d.b)d.b={};
   return d;
 }
@@ -492,13 +511,15 @@ function avgAlert(c,s,e,ch){
   let sum=0,n=0;for(let t=s;t<e;t+=20){sum+=alertAt(t-c.wake,ch);n++;}
   return n?sum/n:0;
 }
-// Attention residue: demanding blocks need a real transition on either side —
-// and two high-effort blocks back-to-back need a genuinely longer reset.
-function marg(a,b){
+// Attention residue flows FORWARD out of demanding work: the block after a hard
+// block needs a real transition, but easy->hard needs only a brief settling-in.
+// Two high-effort blocks back-to-back need a genuinely longer reset.
+function marg(a,b){ // a = the earlier block's effort, b = the later block's
   const hi=x=>x==="high"||x==="phys";
   if(hi(a)&&hi(b))return 25;
-  if(hi(a)||hi(b))return 15;
-  if(a==="med"||b==="med")return 10;
+  if(hi(a))return 15;
+  if(a==="med")return 10;
+  if(hi(b))return 5;
   return 0;
 }
 // Find the best start for a session of `dur` minutes. o: {eff, ch, win, notAfter, late, shrink, minDur}
@@ -803,14 +824,14 @@ function checklistRate(field,ws){
   for(let i=0;i<7;i++){
     const d=addDays(ws,i);if(d>today)continue;
     const r=DATA.log[iso(d)];
-    const len=field==="m"?MORNING_BASE.length:EVENING_BASE.length;
+    const len=field==="m"?MLIST().length:ELIST().length;
     total+=len;if(r&&r[field])done+=r[field].filter(Boolean).length;
   }
   return{done,total};
 }
 function allTimeRate(field){
   let done=0,total=0;
-  const len=field==="m"?MORNING_BASE.length:EVENING_BASE.length;
+  const len=field==="m"?MLIST().length:ELIST().length;
   Object.values(DATA.log).forEach(r=>{const a=r[field];if(a){done+=a.filter(Boolean).length;total+=len;}});
   return total?Math.round(100*done/total):null;
 }
@@ -879,10 +900,12 @@ function renderToday(){
   let html="";
 
   if(!DATA.applied){
-    appEl.innerHTML=`<div class="panel"><h2>No schedule yet</h2>
-      <div class="ph">Build your plan first — add your fixed commitments, workloads and routines, then press <b>Generate &amp; apply</b>. Today and Week light up from there.</div>
-      <button class="btn" id="goPlan">Open the Plan tab →</button></div>`;
+    appEl.innerHTML=`<div class="panel"><h2>👋 Welcome</h2>
+      <div class="ph">This app builds a weekly schedule around your sleep, your energy curve, and everything you have to do — then turns each day into a checkable plan with habit streaks.</div>
+      <button class="genbtn" id="demoNow" style="margin-bottom:8px">▶ See a live example (one tap)</button>
+      <button class="genbtn quiet" id="goPlan">＋ Build my own week</button></div>`;
     document.getElementById("goPlan").onclick=()=>{TAB="plan";render();};
+    document.getElementById("demoNow").onclick=loadExampleLive;
     return;
   }
 
@@ -912,17 +935,8 @@ function renderToday(){
       <div class="future-note">Preview — check-offs unlock when the day arrives. Use ＋ to add a one-off for this week.</div>`;
     html+=c.blocks.map((b,i)=>blockHTML(b,i,null,false)).join("")+`</div>`;
   } else {
-    // morning checklist
-    html+=`<div class="panel">
-      <h2>Morning launch <span class="rate">this week: <b>${mr.done}</b>/${mr.total} steps</span></h2>
-      <div class="ph">If-then steps beat willpower at your groggiest — tick as you go.</div>`;
-    MORNING_BASE.forEach((t,i)=>{
-      html+=`<div class="item${r.m[i]?" done":""}" data-k="m" data-i="${i}"><div class="box">${r.m[i]?"✓":""}</div><div class="txt">${esc(t)}</div></div>`;
-    });
-    html+=`</div>`;
-
-    // today's generated plan — only blocks you DO get checkboxes; things that
-    // happen to you (fixed events, meals, buffers, free time) are just context
+    // today's generated plan first — it's the headline. Only blocks you DO get
+    // checkboxes; things that happen to you (fixed events, meals, buffers) are context
     const canCheck=b=>!b.marker&&(b.kind==="work"||(b.kind==="routine"&&b.evId));
     const doneN=c.blocks.filter(b=>canCheck(b)&&r.b[b.s+"|"+b.label]).length;
     const totN=c.blocks.filter(canCheck).length;
@@ -932,6 +946,15 @@ function renderToday(){
       <h2>Today's plan <span class="rate"><b>${doneN}</b>/${totN} done${isToday?` · <button id="lateBtn" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;font-weight:600;padding:0">${wakeAdj?"⏰ woke "+f12(hm(wakeAdj))+" — reset":"⏰ Late start?"}</button>`:""}</span></h2>
       <div class="ph">Checkboxes only on the blocks you drive — fixed events, meals and buffers are context. A slow block is absorbed, not a crisis.</div>`;
     html+=c.blocks.map((b,i)=>blockHTML(b,i,r,canCheck(b),{now:i===nowIdx,next:i===nextIdx})).join("")+`</div>`;
+
+    // morning checklist
+    html+=`<div class="panel">
+      <h2>Morning launch <span class="rate">this week: <b>${mr.done}</b>/${mr.total} <button class="editck" id="editM" title="Edit steps">✎</button></span></h2>
+      <div class="ph">If-then steps beat willpower at your groggiest — tick as you go. ✎ makes this list yours.</div>`;
+    MLIST().forEach((t,i)=>{
+      html+=`<div class="item${r.m[i]?" done":""}" data-k="m" data-i="${i}"><div class="box">${r.m[i]?"✓":""}</div><div class="txt">${esc(t)}</div></div>`;
+    });
+    html+=`</div>`;
 
     // habits + streaks
     html+=`<div class="panel">
@@ -953,9 +976,9 @@ function renderToday(){
 
     // evening checklist
     html+=`<div class="panel">
-      <h2>Evening shutdown <span class="rate">this week: <b>${er.done}</b>/${er.total} steps</span></h2>
+      <h2>Evening shutdown <span class="rate">this week: <b>${er.done}</b>/${er.total} <button class="editck" id="editE" title="Edit steps">✎</button></span></h2>
       <div class="ph">Sets tomorrow up and protects sleep — the whole system leans on the wake anchor this list defends.</div>`;
-    EVENING_BASE.forEach((t,i)=>{
+    ELIST().forEach((t,i)=>{
       html+=`<div class="item${r.e[i]?" done":""}" data-k="e" data-i="${i}"><div class="box">${r.e[i]?"✓":""}</div><div class="txt">${esc(t)}</div></div>`;
     });
     html+=`</div>`;
@@ -991,6 +1014,34 @@ function renderToday(){
     const rr=rec(iso(selDate));rr.b[el.dataset.bk]=!rr.b[el.dataset.bk];saveData();render();});
   const lb=document.getElementById("lateBtn");
   if(lb)lb.onclick=(e)=>{e.stopPropagation();openLateDlg();};
+  const em=document.getElementById("editM"),ee=document.getElementById("editE");
+  if(em)em.onclick=(e)=>{e.stopPropagation();openListEdit("m");};
+  if(ee)ee.onclick=(e)=>{e.stopPropagation();openListEdit("e");};
+}
+
+// edit the morning/evening checklist — one line per step
+function openListEdit(kind){
+  const cur=kind==="m"?MLIST():ELIST();
+  quickBody.innerHTML=`<h3>${kind==="m"?"Morning launch":"Evening shutdown"} steps</h3>
+    <p>One step per line, in order. Keep steps small and physical — "feet on floor" beats "get up". Today's ticks reset if the list changes; history keeps its old counts.</p>
+    <textarea id="lst" style="height:150px;font-family:inherit;font-size:13px">${esc(cur.join("\n"))}</textarea>
+    <div class="drow">
+      <button class="btn" id="lst-save">Save</button>
+      <button class="btn sec" id="lst-default">Reset to default</button>
+      <button class="btn sec" id="lst-cancel">Cancel</button>
+    </div>`;
+  quickDlg.showModal();
+  document.getElementById("lst-cancel").onclick=()=>quickDlg.close();
+  document.getElementById("lst-default").onclick=()=>{
+    if(kind==="m")DATA.mList=null;else DATA.eList=null;
+    saveData();quickDlg.close();render();toast("Back to the default steps.");
+  };
+  document.getElementById("lst-save").onclick=()=>{
+    const items=document.getElementById("lst").value.split("\n").map(x=>x.trim()).filter(Boolean).slice(0,12);
+    if(!items.length){alert("Keep at least one step.");return;}
+    if(kind==="m")DATA.mList=items;else DATA.eList=items;
+    saveData();quickDlg.close();render();toast("Checklist updated.");
+  };
 }
 
 // "Late start" — Motion-style rebuild of just today from your real wake time.
@@ -1041,13 +1092,15 @@ function gridHTML(SC,wk){
   const span=hi-lo,H=Math.max(560,Math.min(780,Math.round(span*.65))),k=H/span;
   const isCur=wk===iso(startOfWeek(today));
   const nowD=new Date(),nowMin=nowD.getHours()*60+nowD.getMinutes();
-  let gut=`<div class="wg-gut"><div class="wg-head"></div><div class="wg-body" style="height:${H}px">`;
+  let gut=`<div class="wg-gut"><div class="wg-head">&nbsp;<span class="wg-date">&nbsp;</span></div><div class="wg-body" style="height:${H}px">`;
   for(let h=Math.ceil(lo/60);h*60<hi;h++)
     gut+=`<div class="wg-hlab" style="top:${(h*60-lo)*k}px">${((h+11)%12)+1}${h%24<12?"a":"p"}</div>`;
   gut+=`</div></div>`;
-  const cols=ORDER.map(d=>{
+  const ws=new Date(wk+"T00:00:00");
+  const cols=ORDER.map((d,ci)=>{
     const c=SC.days[d];
-    let col=`<div class="wg-col"><div class="wg-head${isCur&&d===today.getDay()?" tdy":""}">${DAYS[d]}</div><div class="wg-body" style="height:${H}px">`;
+    const date=addDays(ws,(ORDER[ci]-ws.getDay()+7)%7);
+    let col=`<div class="wg-col"><div class="wg-head${isCur&&d===today.getDay()?" tdy":""}">${DAYS[d]}<span class="wg-date">${date.getDate()}</span></div><div class="wg-body" style="height:${H}px">`;
     for(let h=Math.ceil(lo/60);h*60<hi;h++)col+=`<div class="wg-hline" style="top:${(h*60-lo)*k}px"></div>`;
     c.blocks.forEach((b,i)=>{
       if(b.marker||b.e<=b.s)return;
@@ -1065,10 +1118,12 @@ function gridHTML(SC,wk){
 let wkMode=localStorage.getItem("habitsched-wkmode")||"grid";
 function renderWeek(){
   if(!DATA.applied){
-    appEl.innerHTML=`<div class="panel"><h2>No schedule yet</h2>
-      <div class="ph">The Week view shows your generated plan. Set up events on the Plan tab and press <b>Generate &amp; apply</b>.</div>
-      <button class="btn" id="goPlan">Open the Plan tab →</button></div>`;
+    appEl.innerHTML=`<div class="panel"><h2>Nothing generated yet</h2>
+      <div class="ph">The Week view shows your generated plan — the whole week at a glance, blocks sized by real time.</div>
+      <button class="genbtn" id="demoNow" style="margin-bottom:8px">▶ See a live example</button>
+      <button class="genbtn quiet" id="goPlan">＋ Build my own week</button></div>`;
     document.getElementById("goPlan").onclick=()=>{TAB="plan";render();};
+    document.getElementById("demoNow").onclick=loadExampleLive;
     return;
   }
   const wk=iso(wkView);
@@ -1185,13 +1240,38 @@ function openBlockSheet(wk,dow,bi){
 }
 
 // ---------- PLAN ----------
+// [section title, description, singular label for dialogs, emoji, example line]
 const TYPE_INFO={
-  fixed:["Fixed anchors","Time cannot move — work, class, meetings. Everything else schedules around these; travel becomes real transition blocks."],
-  deadline:["Weekly deliverables","Due at a fixed point each week. Bulk sessions land in peak windows on earlier days; a finishing pass lands the morning it's due — never a night-before cram."],
-  quota:["Weekly quotas","\"X focused hours a week.\" Split into ~90–150 min sessions and spread across days (spacing effect), peak windows first."],
-  recurring:["Routines","Specific days, flexible time — gym, meal prep, hair. Same-day cues at stable times are what turn these into automatic habits."],
-  daily:["Daily practices","Happens every day. Anchor it to a stable slot and it becomes a habit in ~66 days on average."]
+  fixed:["Set times","Class, work shifts, meetings — things whose time can't move. Everything flexible schedules around them, and travel time becomes real blocks.","Set-time event","📌","Class Tue–Thu 1:00–3:30 · shift · standing meeting"],
+  deadline:["Due each week","Assignments, readings, prep — due at the same point every week. The work lands in your peak-focus windows beforehand, with a finishing pass near the deadline.","Weekly deadline","🎯","Essay due Tue 1:00 · reading before Wed class"],
+  quota:["Hours per week","\"X focused hours a week\" — research, thesis, a side project. Split into 90–150 min sessions and spread across the week, best hours first.","Weekly hours target","⏱","Research 20 h/wk · job applications 5 h/wk"],
+  recurring:["Routines","Set days, flexible time — the scheduler finds the right slot. Stable slots are what turn these into automatic habits.","Routine","🔁","Gym Mon/Wed/Fri · meal prep Sun · commute weekdays"],
+  daily:["Every day","A daily practice, anchored to a stable slot.","Daily practice","📅","30 min reading · meditation · language app"]
 };
+const TYPE_ORDER=["fixed","deadline","quota","recurring","daily"];
+
+// one entry point for adding anything: a plain-language chooser
+function openAddChooser(){
+  sheetBody.innerHTML=`<h3>What are you adding?</h3>
+    <p>Pick the shape of it — the scheduler handles the placement thinking.</p>`+
+    TYPE_ORDER.map(t=>`<button class="opt" data-t="${t}">${TYPE_INFO[t][3]} ${TYPE_INFO[t][2]}
+      <small>${esc(TYPE_INFO[t][4])}</small></button>`).join("")+
+    `<button class="opt" data-t="close">Cancel</button>`;
+  sheetDlg.showModal();
+  sheetBody.querySelectorAll(".opt").forEach(o=>o.onclick=()=>{
+    sheetDlg.close();
+    if(o.dataset.t!=="close")openEvDlg(null,o.dataset.t);
+  });
+}
+
+// one-tap live demo: load the example AND generate it, so the value is visible immediately
+function loadExampleLive(){
+  DATA.events=EXAMPLE_EVENTS.map(e=>JSON.parse(JSON.stringify(e)));
+  DATA.settings={...DEFAULT_SETTINGS};
+  applySchedule();
+  TAB="week";wkView=startOfWeek(today);render();
+  toast("This is the example week, live. Poke around — then reshape it in Plan, or start clean from Schedules.");
+}
 function evSummary(ev){
   const dstr=d=>(d||[]).slice().sort((a,b)=>lin(a)-lin(b)).map(x=>DAYS[x]).join(" ");
   if(ev.type==="fixed")return dstr(ev.days)+" · "+f12(hm(ev.start))+"–"+f12(hm(ev.end))+(ev.travelBefore?" · +"+ev.travelBefore+" min travel":"");
@@ -1209,29 +1289,27 @@ function renderPlan(){
   let html="";
 
   // schedule header: which schedule you're editing + the explicit generate step.
-  // Nothing applies silently — Sunsama-style "plan deliberately, then commit".
+  // Nothing applies silently — plan deliberately, then commit.
+  const genLabel=!DATA.applied?"⚡ Generate my schedule":stale?"⚡ Regenerate — apply my changes":"✓ Up to date — regenerate anyway";
   html+=`<div class="panel"><h2>📋 ${esc(DATA.schedName)}
       <button class="iconbtn" id="schMgr" style="font-size:12px;padding:5px 10px">Schedules ▾</button></h2>
     <div class="ph">${DATA.applied?
-      (stale?"Inputs changed since the last generate — the live schedule still shows the previous version.":"Live — this schedule is generated and applied.")
-      :"Not generated yet — add events below, then generate."}</div>
-    <button class="genbtn" id="genBtn"${empty?" disabled":""}>⚡ Generate & apply schedule</button>
-    ${stale&&DATA.applied?`<div class="stale"><b>Draft changes pending</b><span>Today / Week / Export keep using the last applied schedule until you regenerate.</span></div>`:""}
+      (stale?"You have unsaved planning changes — the live schedule still shows the previous version until you regenerate.":"Live — Today and Week are running on this plan.")
+      :empty?"Add what your week actually contains, then generate.":"Ready — generate to see your week."}</div>
+    <button class="genbtn${stale&&!empty?" pulse":""}${!stale&&DATA.applied?" quiet":""}" id="genBtn"${empty?" disabled":""}>${genLabel}</button>
   </div>`;
 
   if(empty){
-    html+=`<div class="panel"><h2>Start from scratch</h2>
-      <div class="ph">Feed the scheduler your real life in four steps — it does the placement thinking.</div>
-      <ul class="steps">
-        <li><b>1 · Set your anchors</b> below — wake time, sleep need, chronotype. Everything hangs on these.</li>
-        <li><b>2 · Add fixed anchors</b> — work, class, meetings. The immovable skeleton.</li>
-        <li><b>3 · Add your workloads</b> — weekly deliverables (due at a fixed point) and quotas ("20 focused h/week").</li>
-        <li><b>4 · Add routines & daily practices</b> — gym, meal prep, anything habit-shaped. Then hit <b>Generate</b>.</li>
-      </ul>
-      <div class="drow">
-        <button class="btn sec" id="loadExample">Load the example schedule instead</button>
-        <button class="btn sec" id="goImport">Import from a calendar →</button>
-      </div>
+    html+=`<div class="panel"><h2>👋 Two ways to start</h2>
+      <div class="ph">This app builds your week for you — around your sleep, your energy curve, and everything you feed it.</div>
+      <button class="genbtn" id="demoBtn" style="margin-bottom:8px">▶ See a live example first</button>
+      <button class="genbtn quiet" id="firstAdd">＋ Start adding my own week</button>
+      <div class="ph" style="margin:12px 0 4px"><b style="color:var(--text)">What building looks like:</b></div>
+      <div class="steprow" data-go="anchors"><b>1</b><span>Check your anchors below — wake time, sleep need, chronotype. Everything hangs on these.</span></div>
+      <div class="steprow" data-go="fixed"><b>2</b><span>Add your <b>set times</b> — class, work, meetings.</span></div>
+      <div class="steprow" data-go="deadline"><b>3</b><span>Add work that's <b>due each week</b> and your <b>hours-per-week</b> targets.</span></div>
+      <div class="steprow" data-go="recurring"><b>4</b><span>Add <b>routines</b> — gym, meal prep, commute — then hit Generate.</span></div>
+      <div class="ph" style="margin-top:10px">Already keep a work/class calendar? <button class="linkbtn" id="goImport">Import it →</button></div>
     </div>`;
   }
 
@@ -1262,14 +1340,16 @@ function renderPlan(){
     <label class="ckrow"><input type="checkbox" id="s-weekendFlex" ${S.weekendFlex?"checked":""}> Allow +45 min weekend wake (off = smoother Mondays)</label>
   </div>`;
 
-  for(const t of ["fixed","deadline","quota","recurring","daily"]){
+  for(const t of TYPE_ORDER){
     const evs=DATA.events.filter(e=>e.type===t);
-    html+=`<div class="panel"><h2>${TYPE_INFO[t][0]}</h2><div class="ph">${TYPE_INFO[t][1]}</div>`;
+    if(!evs.length&&empty)continue; // empty state already explains the shapes — don't repeat 5 empty panels
+    html+=`<div class="panel"><h2>${TYPE_INFO[t][3]} ${TYPE_INFO[t][0]}</h2><div class="ph">${TYPE_INFO[t][1]}</div>`;
     if(evs.length)html+=evs.map(ev=>`<div class="evrow" data-ev="${ev.id}">
       <div class="en">${esc(ev.name)}<small>${esc(evSummary(ev))}</small></div><div class="edit">edit ›</div></div>`).join("");
-    else html+=`<div class="ph" style="margin:0">None yet.</div>`;
-    html+=`<button class="addbtn" data-add="${t}">+ Add</button></div>`;
+    else html+=`<div class="ph" style="margin:0;font-style:italic">e.g. ${esc(TYPE_INFO[t][4])}</div>`;
+    html+=`<button class="addbtn" data-add="${t}">+ Add ${TYPE_INFO[t][2].toLowerCase()}</button></div>`;
   }
+  if(!empty)html+=`<button class="addbtn" id="addAny" style="margin-bottom:13px;padding:13px">＋ Add something else to your week</button>`;
 
   if(DATA.applied){
     const curWarn=getSched().warnings;
@@ -1298,25 +1378,32 @@ function renderPlan(){
   };
   const sm=document.getElementById("schMgr");
   if(sm)sm.onclick=openSchedManager;
-  const le=document.getElementById("loadExample");
-  if(le)le.onclick=()=>{
-    DATA.events=EXAMPLE_EVENTS.map(e=>JSON.parse(JSON.stringify(e)));
-    saveData();render();
-    toast("Example loaded as a draft — press Generate to apply it.");
-  };
+  const db=document.getElementById("demoBtn");
+  if(db)db.onclick=loadExampleLive;
+  const fa=document.getElementById("firstAdd");
+  if(fa)fa.onclick=openAddChooser;
+  const aa=document.getElementById("addAny");
+  if(aa)aa.onclick=openAddChooser;
+  document.querySelectorAll(".steprow").forEach(sr=>sr.onclick=()=>{
+    const go=sr.dataset.go;
+    if(go==="anchors"){const el=document.getElementById("s-wake");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});}
+    else openEvDlg(null,go);
+  });
   const gi=document.getElementById("goImport");
-  if(gi)gi.onclick=()=>{TAB="export";render();};
+  if(gi)gi.onclick=(e)=>{e.stopPropagation();TAB="export";render();};
 }
 
 // ---------- schedule profiles: build and switch between multiple schedules ----------
 function stashActive(){
   return JSON.parse(JSON.stringify({id:DATA.schedId,name:DATA.schedName,
-    settings:DATA.settings,events:DATA.events,applied:DATA.applied,adjust:DATA.adjust}));
+    settings:DATA.settings,events:DATA.events,applied:DATA.applied,adjust:DATA.adjust,
+    mList:DATA.mList||null,eList:DATA.eList||null}));
 }
 function loadProfile(p){
   DATA.schedId=p.id;DATA.schedName=p.name;
   DATA.settings={...DEFAULT_SETTINGS,...p.settings};
   DATA.events=p.events||[];DATA.applied=p.applied||null;DATA.adjust=p.adjust||{};
+  DATA.mList=p.mList||null;DATA.eList=p.eList||null;
 }
 function openSchedManager(){
   let list=`<h3>Schedules</h3><p>Each schedule is a full setup — anchors, events, and its generated plan. Habit history is shared. Switch to a different life phase, or draft the next one ahead of time.</p>`;
@@ -1382,8 +1469,8 @@ function openEvDlg(ev,type){
     start:"09:00",end:"10:00",travelBefore:0,travelAfter:0,
     dueDay:1,dueTime:"13:00",hours:2,hoursWk:10,maxSession:120,
     duration:60,window:"any",physical:false,habit:false};
-  let f=`<h3>${isNew?"Add":"Edit"} — ${TYPE_INFO[type][0].replace(/s$/,"")}</h3><p>${TYPE_INFO[type][1]}</p>
-  <div class="frow"><label>Name</label><input type="text" id="f-name" value="${esc(ev.name)}" placeholder="e.g. ${type==="fixed"?"Work shift":type==="deadline"?"Problem set":type==="quota"?"Thesis writing":type==="recurring"?"Gym":"Language practice"}"></div>`;
+  let f=`<h3>${TYPE_INFO[type][3]} ${isNew?"New":"Edit"} ${TYPE_INFO[type][2].toLowerCase()}</h3><p>${TYPE_INFO[type][1]}</p>
+  <div class="frow"><label>Name</label><input type="text" id="f-name" value="${esc(ev.name)}" placeholder="e.g. ${type==="fixed"?"Class / Work shift":type==="deadline"?"Problem set / Reading":type==="quota"?"Research / Thesis":type==="recurring"?"Gym / Meal prep / Commute":"Reading / Meditation"}" autofocus></div>`;
 
   if(type==="fixed"){
     f+=`<div class="frow"><label>Days</label>${chipRow("f-days",ev.days)}</div>
@@ -1428,7 +1515,8 @@ function openEvDlg(ev,type){
     if(type==="recurring")f+=`<div class="frow"><label>Days</label>${chipRow("f-days",ev.days)}
       <div class="hint">Same days + same slot = a stable cue, the strongest predictor of a habit sticking.</div></div>`;
     f+=`<div class="half">
-      <div class="frow"><label>Duration (min)</label><input type="number" id="f-duration" min="10" max="360" step="5" value="${ev.duration}"></div>
+      <div class="frow"><label>Duration (min)</label><input type="number" id="f-duration" min="10" max="360" step="5" value="${ev.duration}">
+        <div class="chips" style="margin-top:6px">${[30,45,60,90,120].map(m=>`<div class="chip dchip" data-m="${m}">${m}</div>`).join("")}</div></div>
       <div class="frow"><label>Preferred time</label><select id="f-window">${[["morning","Morning"],["afternoon","Afternoon"],["evening","Evening"],["any","Whenever fits"]].map(w=>`<option value="${w[0]}" ${w[0]===ev.window?"selected":""}>${w[1]}</option>`).join("")}</select></div>
     </div>
     <div class="frow"><label>Effort</label>${effortSel("f-eff",ev.effort)}</div>
@@ -1448,6 +1536,7 @@ function openEvDlg(ev,type){
 
   const chipEl=document.getElementById("f-days");
   if(chipEl)chipEl.querySelectorAll(".chip").forEach(c=>c.onclick=()=>c.classList.toggle("on"));
+  evBody.querySelectorAll(".dchip").forEach(c=>c.onclick=()=>{document.getElementById("f-duration").value=c.dataset.m;});
   document.getElementById("f-cancel").onclick=()=>evDlg.close();
   const del=document.getElementById("f-del");
   if(del)del.onclick=()=>{
@@ -1475,6 +1564,7 @@ function openEvDlg(ev,type){
     if(isNew){ne.id="ev"+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);DATA.events.push(ne);}
     else{const i=DATA.events.findIndex(e=>e.id===ev.id);DATA.events[i]=ne;}
     saveData();rebuild();evDlg.close();render();
+    toast(isNew?"Added to the draft — hit Generate when you're ready.":"Saved — regenerate to apply the change.");
   };
 }
 
@@ -1552,10 +1642,13 @@ function openQuickDlg(wk,mode,presetId){
       <div class="frow"><label>Change for this week (hours)</label><input type="number" id="q-delta" step="0.5" value="2" min="-40" max="40">
         <div class="hint">Positive = crunch week (+2 h), negative = lighten the load (−3 h). Sessions are re-spread across the week either way.</div></div>`;
     }
-    f+=`<div class="drow"><button class="btn" id="q-save">Apply to this week</button><button class="btn sec" id="q-cancel">Cancel</button></div>`;
+    f+=`<div class="drow"><button class="btn" id="q-save">Apply to this week</button><button class="btn sec" id="q-cancel">Cancel</button></div>
+    <div class="hint" style="margin-top:10px">Happens every week? <button class="linkbtn" id="q-perm">Add it to the plan instead →</button></div>`;
     quickBody.innerHTML=f;
     quickBody.querySelectorAll(".sopt").forEach(s=>s.onclick=()=>{mode=s.dataset.m;form();});
     document.getElementById("q-cancel").onclick=()=>quickDlg.close();
+    const qp=document.getElementById("q-perm");
+    if(qp)qp.onclick=()=>{quickDlg.close();openAddChooser();};
     document.getElementById("q-save").onclick=()=>{
       const v=id=>{const el=document.getElementById(id);return el?el.value:undefined;};
       const a=adjFor(wk);
@@ -1590,6 +1683,7 @@ function openQuickDlg(wk,mode,presetId){
   quickDlg.showModal();
 }
 document.getElementById("fab").onclick=()=>{
+  if(TAB==="plan"){openAddChooser();return;}
   const wk=TAB==="week"?iso(wkView):weekKeyOf(selDate);
   openQuickDlg(wk);
 };
@@ -1728,8 +1822,9 @@ function renderExport(){
   }
   html+=`</div>`;
 
+  const noSched=!DATA.applied;
   html+=`<div class="panel"><h2>Export to Google Calendar</h2>
-    <div class="ph">Builds a standard .ics file from your generated schedule — including any ⚡ week adjustments. Times are exported in your local time zone.</div>
+    <div class="ph">${noSched?"Generate a schedule first — then export it here as a file Google Calendar reads directly.":"Builds a standard .ics file from your generated schedule — including any ⚡ week adjustments. Times are exported in your local time zone."}</div>
     <div class="frow"><label>How much to export</label><select id="ex-weeks">
       ${[["1","This week"],["2","Next 2 weeks"],["4","Next 4 weeks"],["8","Next 8 weeks"]].map(o=>`<option value="${o[0]}" ${+o[0]===exWeeks?"selected":""}>${o[1]}</option>`).join("")}</select>
       <div class="hint">Each week is exported as it's actually scheduled — an adjusted week exports its adjusted plan.</div></div>
@@ -1737,8 +1832,8 @@ function renderExport(){
       ${EX_CATS.map(c=>`<label class="ckrow"><input type="checkbox" data-cat="${c[0]}" ${exInc[c[0]]?"checked":""}> ${c[1]}${c[2]?` <span style="color:var(--muted);font-weight:400">· ${c[2]}</span>`:""}</label>`).join("")}
       <div class="hint">Buffers and free time are off by default so your calendar stays readable — the schedule still honors them here.</div></div>
     <div class="drow">
-      <button class="btn" id="ex-dl">⬇ Download .ics</button>
-      <button class="btn sec" id="ex-copy">Copy .ics text</button>
+      <button class="btn" id="ex-dl"${noSched?" disabled style=\"opacity:.45\"":""}>⬇ Download .ics</button>
+      <button class="btn sec" id="ex-copy"${noSched?" disabled style=\"opacity:.45\"":""}>Copy .ics text</button>
     </div>
   </div>
   <div class="panel"><h2>Importing into Google Calendar</h2>
@@ -1787,14 +1882,14 @@ function renderBanner(){
     <button class="banner-close" id="dismissBanner" aria-label="Dismiss">×</button></div>`;
   document.getElementById("dismissBanner").onclick=()=>{localStorage.setItem(LS_BANNER,"1");wrap.innerHTML="";};
 }
-const SUBS={today:"Checklists keep you on routine · habits build streaks · today's plan comes from the scheduler.",
-  week:"Your week, generated from your events — hard work in peak windows, real buffers, protected sleep.",
-  plan:"Feed it your commitments — it builds the week around your biology.",
+const SUBS={today:"Today's plan, your habits, and the checklists that hold the routine together.",
+  week:"Your whole week at a glance — hard work in peak windows, real buffers, protected sleep.",
+  plan:"Tell it what your week contains, then Generate — nothing changes until you say so.",
   export:"Import your real calendar in, export the generated plan out — one .ics each way."};
 function render(){
   document.querySelectorAll(".mtab").forEach(t=>t.classList.toggle("active",t.dataset.t===TAB));
   document.getElementById("pageSub").textContent=SUBS[TAB];
-  document.getElementById("fab").classList.toggle("show",TAB==="today"||TAB==="week");
+  document.getElementById("fab").classList.toggle("show",TAB==="today"||TAB==="week"||TAB==="plan");
   if(TAB==="today")renderToday();
   else if(TAB==="week")renderWeek();
   else if(TAB==="export")renderExport();

@@ -719,8 +719,18 @@ function buildWeek(wk){
       }
     }
     stats[ev.id]={placed:placedMin,target:total};
-    // a deliverable can count toward a weekly quota (e.g. group-meeting presentation -> research hours)
-    if(ev.counts)quotaCredit[ev.counts]=(quotaCredit[ev.counts]||0)+placedMin;
+  }
+
+  // credit toward quotas from ANY event flagged to count: fixed anchors, routines,
+  // daily practices and deliverables all offset a quota by the core time they occupy
+  // (travel/buffers excluded). Every source above is placed before the quota loop below.
+  const CREDIT_KINDS={fixed:1,routine:1,work:1};
+  const evById={};evs.forEach(e=>evById[e.id]=e);
+  for(let d=0;d<7;d++)for(const b of days[d].blocks){
+    if(!b.evId||b.marker)continue;
+    const src=evById[b.evId];
+    if(src&&src.counts&&CREDIT_KINDS[b.kind])
+      quotaCredit[src.counts]=(quotaCredit[src.counts]||0)+(b.e-b.s);
   }
 
   // ---- 7. weekly quotas: spread across days (spacing effect), peaks first ----
@@ -753,7 +763,7 @@ function buildWeek(wk){
       perDay[pick.d]=(perDay[pick.d]||0)+1;
     }
     stats[ev.id]={placed:placedMin,target:Math.round(hoursEff*60),credit};
-    if(remaining>=45)warnings.push(ev.name+": placed "+hrs(placedMin+credit)+" h of the "+hoursEff+" h target"+(credit?" (incl. "+hrs(credit)+" h from deliverables)":"")+" — the week is at capacity. Lower the target or free up mornings.");
+    if(remaining>=45)warnings.push(ev.name+": placed "+hrs(placedMin+credit)+" h of the "+hoursEff+" h target"+(credit?" (incl. "+hrs(credit)+" h from linked events)":"")+" — the week is at capacity. Lower the target or free up mornings.");
   }
 
   // ---- 8. fill: leftover gaps become explicit buffers and honest free time ----
@@ -1274,13 +1284,15 @@ function loadExampleLive(){
 }
 function evSummary(ev){
   const dstr=d=>(d||[]).slice().sort((a,b)=>lin(a)-lin(b)).map(x=>DAYS[x]).join(" ");
-  if(ev.type==="fixed")return dstr(ev.days)+" · "+f12(hm(ev.start))+"–"+f12(hm(ev.end))+(ev.travelBefore?" · +"+ev.travelBefore+" min travel":"");
-  if(ev.type==="deadline"){const q=ev.counts?DATA.events.find(e=>e.id===ev.counts):null;
-    return "due "+DAYS[ev.dueDay]+" "+f12(hm(ev.dueTime))+" · ~"+ev.hours+" h · "+ev.effort+" effort"+(q?" · counts toward "+q.name:"");}
+  const cq=ev.counts?DATA.events.find(e=>e.id===ev.counts):null;
+  const cnote=cq?" · counts toward "+cq.name:"";
+  if(ev.type==="fixed")return dstr(ev.days)+" · "+f12(hm(ev.start))+"–"+f12(hm(ev.end))+(ev.travelBefore?" · +"+ev.travelBefore+" min travel":"")+cnote;
+  if(ev.type==="deadline")
+    return "due "+DAYS[ev.dueDay]+" "+f12(hm(ev.dueTime))+" · ~"+ev.hours+" h · "+ev.effort+" effort"+cnote;
   if(ev.type==="quota"){const st=getSched().stats[ev.id];
-    return ev.hoursWk+" h/week"+(st?" · scheduled "+hrs(st.placed)+" h"+(st.credit?" + "+hrs(st.credit)+" h deliverables":""):"")+" · ≤"+(ev.maxSession||120)+" min sessions";}
-  if(ev.type==="recurring")return dstr(ev.days)+" · "+ev.duration+" min · "+ev.window+(ev.habit?" · streak-tracked":"");
-  return "daily · "+ev.duration+" min · "+ev.window+(ev.habit?" · streak-tracked":"");
+    return ev.hoursWk+" h/week"+(st?" · scheduled "+hrs(st.placed)+" h"+(st.credit?" + "+hrs(st.credit)+" h from linked events":""):"")+" · ≤"+(ev.maxSession||120)+" min sessions";}
+  if(ev.type==="recurring")return dstr(ev.days)+" · "+ev.duration+" min · "+ev.window+(ev.habit?" · streak-tracked":"")+cnote;
+  return "daily · "+ev.duration+" min · "+ev.window+(ev.habit?" · streak-tracked":"")+cnote;
 }
 function renderPlan(){
   const S=DATA.settings;
@@ -1494,11 +1506,6 @@ function openEvDlg(ev,type){
       <div class="hint">${DATA.settings.pad?"Padded ×1.3 automatically — people run 40–60% over their estimates.":"Padding is off in settings — this is taken at face value."}</div></div>
     <div class="frow"><label>Cognitive demand</label>${effortSel("f-eff",ev.effort)}
       <div class="hint">High-demand work is placed in your peak window (2–6.5 h after waking), split into ~90–120 min sessions, finishing pass on the morning it's due.</div></div>`;
-    const quotas=DATA.events.filter(e=>e.type==="quota");
-    if(quotas.length)f+=`<div class="frow"><label>Counts toward a weekly quota?</label>
-      <select id="f-counts"><option value="">No — separate workload</option>
-      ${quotas.map(q=>`<option value="${q.id}" ${q.id===ev.counts?"selected":""}>${esc(q.name)} (${q.hoursWk} h/wk)</option>`).join("")}</select>
-      <div class="hint">e.g. a presentation for Thursday's group meeting is research — its scheduled hours reduce what the quota still needs to place.</div></div>`;
   }
   if(type==="quota"){
     f+=`<div class="half">
@@ -1525,6 +1532,13 @@ function openEvDlg(ev,type){
     <label class="ckrow"><input type="checkbox" id="f-habit" ${ev.habit?"checked":""}> Track as a habit with a streak
       </label><div class="hint" style="margin:-2px 0 8px 25px">Shows on the Today tab with a streak — automaticity takes ~66 days on average.</div>`;
   }
+  // counts-toward-a-quota — any non-quota event can offset a weekly quota
+  // (a fixed lab meeting, a routine, a daily practice, or a deliverable that's really research)
+  const cQuotas=DATA.events.filter(e=>e.type==="quota"&&e.id!==ev.id);
+  if(type!=="quota"&&cQuotas.length)f+=`<div class="frow"><label>Counts toward a weekly quota?</label>
+    <select id="f-counts"><option value="">No — separate workload</option>
+    ${cQuotas.map(q=>`<option value="${q.id}" ${q.id===ev.counts?"selected":""}>${esc(q.name)} (${q.hoursWk} h/wk)</option>`).join("")}</select>
+    <div class="hint">The time this takes reduces what the quota still needs to place — e.g. a Thursday lab meeting or a daily reading habit that's really research.</div></div>`;
   f+=`<div class="frow"><label>Note (optional)</label><input type="text" id="f-note" value="${esc(ev.note||"")}" placeholder="Anything future-you should see on the block"></div>
   <div class="drow">
     <button class="btn" id="f-save">Save</button>
@@ -1551,13 +1565,13 @@ function openEvDlg(ev,type){
     const days=chipEl?[...chipEl.querySelectorAll(".chip.on")].map(c=>+c.dataset.d):undefined;
     if((type==="fixed"||type==="recurring")&&(!days||!days.length)){alert("Pick at least one day.");return;}
     const ne={...ev,name,note:(v("f-note")||"").trim(),effort:v("f-eff")||ev.effort};
+    {const ct=v("f-counts");if(ct)ne.counts=ct;else delete ne.counts;} // any type can count toward a quota
     if(type==="fixed"){ne.days=days;ne.start=v("f-start");ne.end=v("f-end");
       ne.travelBefore=Math.max(0,+v("f-tb")||0);ne.travelAfter=Math.max(0,+v("f-ta")||0);
       if(hm(ne.end)<=hm(ne.start)){alert("End must be after start.");return;}
       const conf=fixedConflicts(DATA.events,days,hm(ne.start),hm(ne.end),ev.id);
       if(conf.length&&!confirm("This overlaps "+conf.join(", ")+".\nSave anyway?"))return;}
-    if(type==="deadline"){ne.dueDay=+v("f-dueDay");ne.dueTime=v("f-dueTime");ne.hours=Math.max(.5,+v("f-hours")||1);
-      const ct=v("f-counts");if(ct)ne.counts=ct;else delete ne.counts;}
+    if(type==="deadline"){ne.dueDay=+v("f-dueDay");ne.dueTime=v("f-dueTime");ne.hours=Math.max(.5,+v("f-hours")||1);}
     if(type==="quota"){ne.hoursWk=Math.max(1,+v("f-hoursWk")||1);ne.maxSession=+v("f-maxSession");ne.days=days&&days.length?days:[0,1,2,3,4,5,6];}
     if(type==="recurring"||type==="daily"){ne.duration=Math.max(10,+v("f-duration")||30);ne.window=v("f-window");
       ne.physical=ck("f-physical");ne.habit=ck("f-habit");if(type==="recurring")ne.days=days;}
